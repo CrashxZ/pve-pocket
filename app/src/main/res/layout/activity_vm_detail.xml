@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Homelab Pocket — Guest VM/LXC Detail Activity -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/matrix_obsidian">
+
+    <!-- Top Bar -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:orientation="horizontal"
+        android:background="@color/matrix_surface"
+        android:gravity="center_vertical"
+        android:paddingStart="12dp"
+        android:paddingEnd="16dp">
+
+        <Button
+            android:id="@+id/btn_back"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/touch_target_min"
+            android:text="&lt; GUESTS"
+            android:textColor="@color/matrix_phosphor"
+            android:background="?android:attr/selectableItemBackground"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace" />
+
+        <TextView
+            android:id="@+id/tv_guest_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textSize="17sp"
+            android:textStyle="bold"
+            android:textColor="@color/matrix_text_primary"
+            android:layout_marginStart="8dp" />
+
+        <TextView
+            android:id="@+id/tv_guest_detail_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_chip_running"
+            android:textColor="@color/matrix_phosphor"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/matrix_surface_border" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <!-- Metrics Card -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/bg_card_matrix"
+                android:padding="16dp"
+                android:layout_marginBottom="16dp">
+
+                <TextView
+                    android:id="@+id/tv_guest_id_node"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textSize="13sp"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/matrix_cyan"
+                    android:layout_marginBottom="12dp" />
+
+                <TextView
+                    android:id="@+id/tv_detail_guest_cpu"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="CPU: 0.0%"
+                    android:textSize="13sp"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/matrix_text_primary" />
+
+                <ProgressBar
+                    android:id="@+id/progress_guest_cpu"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="6dp"
+                    android:max="100"
+                    android:progressTint="@color/matrix_phosphor"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginBottom="12dp" />
+
+                <TextView
+                    android:id="@+id/tv_detail_guest_ram"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="RAM: 0 / 0 MB"
+                    android:textSize="13sp"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/matrix_text_primary" />
+
+                <ProgressBar
+                    android:id="@+id/progress_guest_ram"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="6dp"
+                    android:max="100"
+                    android:progressTint="@color/matrix_cyan"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginBottom="12dp" />
+
+                <TextView
+                    android:id="@+id/tv_detail_guest_disk"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Disk: 0 / 0 GB"
+                    android:textSize="13sp"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/matrix_text_secondary"
+                    android:layout_marginBottom="6dp" />
+
+                <TextView
+                    android:id="@+id/tv_detail_guest_uptime"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Uptime: -"
+                    android:textSize="12sp"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/matrix_text_secondary" />
+            </LinearLayout>
+
+            <!-- Power Controls Card -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/bg_card_matrix"
+                android:padding="16dp"
+                android:layout_marginBottom="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="POWER &amp; LIFECYCLE CONTROLS"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/matrix_phosphor"
+                    android:layout_marginBottom="12dp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/btn_action_start"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="@dimen/touch_target_min"
+                        android:text="@string/action_start"
+                        android:background="@drawable/bg_btn_phosphor"
+                        android:textColor="@color/matrix_obsidian"
+                        android:textStyle="bold"
+                        android:textSize="12sp"
+                        android:fontFamily="monospace"
+                        android:layout_marginEnd="6dp" />
+
+                    <Button
+                        android:id="@+id/btn_action_shutdown"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="@dimen/touch_target_min"
+                        android:text="@string/action_shutdown"
+                        android:background="@drawable/bg_btn_outline"
+                        android:textColor="@color/matrix_text_primary"
+                        android:textSize="12sp"
+                        android:fontFamily="monospace"
+                        android:layout_marginEnd="6dp" />
+
+                    <Button
+                        android:id="@+id/btn_action_reboot"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="@dimen/touch_target_min"
+                        android:text="@string/action_reboot"
+                        android:background="@drawable/bg_btn_outline"
+                        android:textColor="@color/matrix_text_primary"
+                        android:textSize="12sp"
+                        android:fontFamily="monospace" />
+                </LinearLayout>
+
+                <Button
+                    android:id="@+id/btn_action_force_stop"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/touch_target_min"
+                    android:text="@string/action_force_stop"
+                    android:background="@drawable/bg_btn_outline"
+                    android:textColor="@color/matrix_danger"
+                    android:textSize="12sp"
+                    android:fontFamily="monospace"
+                    android:layout_marginTop="12dp" />
+            </LinearLayout>
+
+            <!-- Interactive Console / Shell Card -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/bg_card_matrix"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="INTERACTIVE TERMINAL"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/matrix_cyan"
+                    android:layout_marginBottom="8dp" />
+
+                <Button
+                    android:id="@+id/btn_action_terminal"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/touch_target_min"
+                    android:text="Open Interactive Console"
+                    android:background="@drawable/bg_btn_outline"
+                    android:textColor="@color/matrix_cyan"
+                    android:textSize="13sp"
+                    android:fontFamily="monospace" />
+            </LinearLayout>
+
+        </LinearLayout>
+    </ScrollView>
+
+</LinearLayout>

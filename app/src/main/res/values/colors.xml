@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matrix Theme Core Palette -->
+    <color name="matrix_obsidian">#0A0F0D</color>
+    <color name="matrix_surface">#121A16</color>
+    <color name="matrix_surface_elevated">#17221D</color>
+    <color name="matrix_surface_border">#1E2D25</color>
+    <color name="matrix_phosphor">#00FF66</color>
+    <color name="matrix_phosphor_dim">#0D3B22</color>
+    <color name="matrix_cyan">#00E5FF</color>
+    <color name="matrix_cyan_dim">#0A3642</color>
+    <color name="matrix_amber">#FFB300</color>
+    <color name="matrix_amber_dim">#3E2F0B</color>
+    <color name="matrix_warning">#FFB300</color>
+    <color name="matrix_danger">#FF3344</color>
+    <color name="matrix_danger_dim">#421217</color>
+
+    <!-- Typography Colors -->
+    <color name="matrix_text_primary">#E1EFE6</color>
+    <color name="matrix_text_secondary">#829B8E</color>
+    <color name="matrix_text_muted">#475C51</color>
+
+    <!-- Theme Aliases for Backward & Component Compatibility -->
+    <color name="colorPrimary">#00FF66</color>
+    <color name="colorPrimaryDark">#0A0F0D</color>
+    <color name="colorAccent">#00E5FF</color>
+    <color name="bg_primary">#0A0F0D</color>
+    <color name="card_bg">#121A16</color>
+    <color name="bg_offline">#161E1A</color>
+    <color name="text_primary">#E1EFE6</color>
+    <color name="text_secondary">#829B8E</color>
+    <color name="text_hint">#475C51</color>
+
+    <!-- Status Telemetry Colors -->
+    <color name="color_online">#00FF66</color>
+    <color name="color_offline">#FFB300</color>
+    <color name="color_running">#00FF66</color>
+    <color name="color_stopped">#475C51</color>
+    <color name="color_warning">#FFB300</color>
+    <color name="color_error">#FF3344</color>
+    <color name="color_cpu_high">#FF3344</color>
+    <color name="color_cpu_mid">#FFB300</color>
+    <color name="color_cpu_low">#00FF66</color>
+
+
+    <!-- Terminal -->
+    <color name="terminal_bg">#060907</color>
+    <color name="terminal_text">#00FF66</color>
+    <color name="terminal_key_bg">#17221D</color>
+    <color name="terminal_key_text">#E1EFE6</color>
+    <color name="terminal_toolbar_bg">#0E1612</color>
+
+    <!-- Progress Bars -->
+    <color name="progress_bg">#1A2520</color>
+    <color name="progress_fill">#00FF66</color>
+</resources>

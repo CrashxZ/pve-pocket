@@ -1,0 +1,378 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Homelab Pocket — Matrix Fleet Overview Fragment -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/matrix_obsidian">
+
+    <!-- Matrix Toolbar -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:orientation="horizontal"
+        android:background="@color/matrix_surface"
+        android:gravity="center_vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="8dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/dashboard_title"
+            android:textColor="@color/matrix_text_primary"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btn_refresh"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/touch_target_min"
+            android:text="@string/refresh"
+            android:textColor="@color/matrix_phosphor"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/matrix_surface_border" />
+
+    <!-- Actionable Error Banner -->
+    <TextView
+        android:id="@+id/tv_error"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/matrix_danger_dim"
+        android:textColor="@color/matrix_danger"
+        android:padding="12dp"
+        android:textSize="12sp"
+        android:fontFamily="monospace"
+        android:visibility="gone" />
+
+    <!-- Scrollable content -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <!-- FIRST RUN EMPTY STATE (Visible when no servers configured) -->
+            <LinearLayout
+                android:id="@+id/layout_empty"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:background="@drawable/bg_card_matrix"
+                android:padding="28dp"
+                android:layout_marginTop="24dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/empty_first_run_title"
+                    android:textSize="20sp"
+                    android:textStyle="bold"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/matrix_phosphor" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/empty_first_run_desc"
+                    android:textSize="13sp"
+                    android:textColor="@color/matrix_text_secondary"
+                    android:gravity="center"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="24dp" />
+
+                <Button
+                    android:id="@+id/btn_empty_add_server"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/touch_target_min"
+                    android:text="@string/empty_add_server_btn"
+                    android:background="@drawable/bg_btn_phosphor"
+                    android:textColor="@color/matrix_obsidian"
+                    android:textStyle="bold"
+                    android:textSize="14sp"
+                    android:layout_marginBottom="12dp" />
+
+            </LinearLayout>
+
+            <!-- LIVE FLEET CONTENT -->
+            <LinearLayout
+                android:id="@+id/layout_fleet_content"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <!-- ORIGINAL SIGNATURE ELEMENT: FLEET TOPOLOGY & QUORUM STRIP -->
+                <LinearLayout
+                    android:id="@+id/card_topology_strip"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:background="@drawable/bg_topology_strip"
+                    android:padding="14dp"
+                    android:layout_marginBottom="12dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+
+                        <TextView
+                            android:id="@+id/tv_quorum_badge"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/topology_quorum_ok"
+                            android:textColor="@color/matrix_phosphor"
+                            android:textSize="12sp"
+                            android:textStyle="bold"
+                            android:fontFamily="monospace" />
+
+                        <View
+                            android:layout_width="0dp"
+                            android:layout_height="1dp"
+                            android:layout_weight="1" />
+
+                        <TextView
+                            android:id="@+id/tv_fleet_status"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="2/2 ONLINE"
+                            android:textColor="@color/matrix_text_secondary"
+                            android:textSize="11sp"
+                            android:fontFamily="monospace" />
+                    </LinearLayout>
+
+                    <!-- Segmented Topology Visual Indicators -->
+                    <LinearLayout
+                        android:id="@+id/layout_topology_bars"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:layout_marginTop="8dp" />
+
+                </LinearLayout>
+
+                <!-- FLEET CAPACITY CARD -->
+                <LinearLayout
+                    android:id="@+id/card_fleet_summary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:background="@drawable/bg_card_matrix"
+                    android:padding="14dp"
+                    android:layout_marginBottom="12dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="FLEET CAPACITY (CAPACITY-WEIGHTED)"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:fontFamily="monospace"
+                        android:textColor="@color/matrix_cyan"
+                        android:layout_marginBottom="8dp" />
+
+                    <!-- Fleet CPU -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/fleet_cpu"
+                            android:textSize="12sp"
+                            android:textColor="@color/matrix_text_secondary" />
+                        <TextView
+                            android:id="@+id/tv_fleet_cpu"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0.0%"
+                            android:textSize="13sp"
+                            android:textStyle="bold"
+                            android:fontFamily="monospace"
+                            android:textColor="@color/matrix_phosphor" />
+                    </LinearLayout>
+
+                    <ProgressBar
+                        android:id="@+id/progress_fleet_cpu"
+                        style="?android:attr/progressBarStyleHorizontal"
+                        android:layout_width="match_parent"
+                        android:layout_height="@dimen/progress_height"
+                        android:max="100"
+                        android:progress="0"
+                        android:progressTint="@color/matrix_phosphor"
+                        android:layout_marginTop="4dp"
+                        android:layout_marginBottom="10dp" />
+
+                    <!-- Fleet RAM (Physical Pool, No double-counting) -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/fleet_ram"
+                            android:textSize="12sp"
+                            android:textColor="@color/matrix_text_secondary" />
+                        <TextView
+                            android:id="@+id/tv_fleet_ram"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0 / 0"
+                            android:textSize="13sp"
+                            android:textStyle="bold"
+                            android:fontFamily="monospace"
+                            android:textColor="@color/matrix_phosphor" />
+                    </LinearLayout>
+
+                    <ProgressBar
+                        android:id="@+id/progress_fleet_ram"
+                        style="?android:attr/progressBarStyleHorizontal"
+                        android:layout_width="match_parent"
+                        android:layout_height="@dimen/progress_height"
+                        android:max="100"
+                        android:progress="0"
+                        android:progressTint="@color/matrix_cyan"
+                        android:layout_marginTop="4dp"
+                        android:layout_marginBottom="10dp" />
+
+                    <!-- Node and Guest Counters -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="@string/fleet_nodes"
+                                android:textSize="11sp"
+                                android:textColor="@color/matrix_text_secondary" />
+                            <TextView
+                                android:id="@+id/tv_node_counts"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="—"
+                                android:textSize="13sp"
+                                android:textStyle="bold"
+                                android:fontFamily="monospace"
+                                android:textColor="@color/matrix_text_primary" />
+                        </LinearLayout>
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="@string/fleet_guests"
+                                android:textSize="11sp"
+                                android:textColor="@color/matrix_text_secondary" />
+                            <TextView
+                                android:id="@+id/tv_guest_counts"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="—"
+                                android:textSize="13sp"
+                                android:textStyle="bold"
+                                android:fontFamily="monospace"
+                                android:textColor="@color/matrix_text_primary" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <!-- Safe Capacity Disclaimers -->
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/resource_note"
+                        android:textSize="10sp"
+                        android:textColor="@color/matrix_text_muted"
+                        android:layout_marginTop="8dp" />
+                </LinearLayout>
+
+                <!-- ONLINE NODES SECTION -->
+                <TextView
+                    android:id="@+id/tv_online_header"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="ONLINE HOSTS"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/matrix_phosphor"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginBottom="6dp" />
+
+                <LinearLayout
+                    android:id="@+id/layout_nodes"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <!-- OFFLINE NODES PARTITION (Intentionally powered off hosts) -->
+                <TextView
+                    android:id="@+id/tv_offline_header"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="OFFLINE HOSTS (STANDBY)"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/matrix_amber"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="6dp"
+                    android:visibility="gone" />
+
+                <LinearLayout
+                    android:id="@+id/layout_offline_nodes"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone" />
+
+                <!-- Last updated timestamp -->
+                <TextView
+                    android:id="@+id/tv_last_updated"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textSize="11sp"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/matrix_text_muted"
+                    android:gravity="end"
+                    android:padding="8dp" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Homelab Pocket — Matrix Guest VMs & Containers Fragment -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/matrix_obsidian">
+
+    <!-- Matrix Toolbar -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:orientation="horizontal"
+        android:background="@color/matrix_surface"
+        android:gravity="center_vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="8dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/nav_guests"
+            android:textColor="@color/matrix_text_primary"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btn_refresh_guests"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/touch_target_min"
+            android:text="@string/refresh"
+            android:textColor="@color/matrix_phosphor"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/matrix_surface_border" />
+
+    <!-- Search Input -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="8dp"
+        android:background="@color/matrix_surface">
+
+        <EditText
+            android:id="@+id/et_search"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/touch_target_min"
+            android:hint="@string/search_hint"
+            android:textColorHint="@color/matrix_text_muted"
+            android:textColor="@color/matrix_text_primary"
+            android:background="@drawable/bg_card_matrix"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:textSize="13sp"
+            android:fontFamily="monospace"
+            android:imeOptions="actionSearch"
+            android:inputType="text"
+            android:singleLine="true" />
+    </LinearLayout>
+
+    <!-- Filter chips row (48dp height for touch reach) -->
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:background="@color/matrix_surface"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/filter_row"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp">
+
+            <Button
+                android:id="@+id/filter_all"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:text="@string/filter_all"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace"
+                android:textColor="@color/matrix_obsidian"
+                android:background="@drawable/bg_btn_phosphor"
+                android:layout_marginEnd="6dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp" />
+
+            <Button
+                android:id="@+id/filter_running"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:text="@string/filter_running"
+                android:textSize="11sp"
+                android:fontFamily="monospace"
+                android:textColor="@color/matrix_text_secondary"
+                android:background="@drawable/bg_btn_outline"
+                android:layout_marginEnd="6dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp" />
+
+            <Button
+                android:id="@+id/filter_stopped"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:text="@string/filter_stopped"
+                android:textSize="11sp"
+                android:fontFamily="monospace"
+                android:textColor="@color/matrix_text_secondary"
+                android:background="@drawable/bg_btn_outline"
+                android:layout_marginEnd="6dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp" />
+
+            <Button
+                android:id="@+id/filter_favorites"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:text="@string/filter_favorites"
+                android:textSize="11sp"
+                android:fontFamily="monospace"
+                android:textColor="@color/matrix_text_secondary"
+                android:background="@drawable/bg_btn_outline"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp" />
+        </LinearLayout>
+    </HorizontalScrollView>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/matrix_surface_border" />
+
+    <!-- Error Banner -->
+    <TextView
+        android:id="@+id/tv_error"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/matrix_danger_dim"
+        android:textColor="@color/matrix_danger"
+        android:padding="12dp"
+        android:textSize="12sp"
+        android:fontFamily="monospace"
+        android:visibility="gone" />
+
+    <!-- Guest List Content -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <!-- Empty guest search state -->
+            <LinearLayout
+                android:id="@+id/layout_empty_guests"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:background="@drawable/bg_card_matrix"
+                android:padding="28dp"
+                android:layout_marginTop="20dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/empty_guests_title"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/matrix_text_secondary" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/empty_guests_desc"
+                    android:textSize="12sp"
+                    android:textColor="@color/matrix_text_muted"
+                    android:gravity="center"
+                    android:layout_marginTop="8dp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/layout_guests"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+
+        </LinearLayout>
+    </ScrollView>
+
+</LinearLayout>

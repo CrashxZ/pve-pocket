@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Homelab Pocket — TLS Fingerprint Verification Dialog -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_card_matrix"
+    android:padding="20dp">
+
+    <TextView
+        android:id="@+id/tv_cert_title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/cert_fingerprint_title"
+        android:textColor="@color/matrix_phosphor"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:fontFamily="monospace"
+        android:layout_marginBottom="12dp" />
+
+    <TextView
+        android:id="@+id/tv_cert_message"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="@color/matrix_text_primary"
+        android:textSize="13sp"
+        android:layout_marginBottom="12dp" />
+
+    <!-- Fingerprint Monospace Display -->
+    <TextView
+        android:id="@+id/tv_cert_fingerprint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/matrix_obsidian"
+        android:padding="10dp"
+        android:textColor="@color/matrix_cyan"
+        android:textSize="11sp"
+        android:fontFamily="monospace"
+        android:layout_marginBottom="20dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="end">
+
+        <Button
+            android:id="@+id/btn_cert_reject"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/touch_target_min"
+            android:text="@string/cert_cancel"
+            android:textColor="@color/matrix_danger"
+            android:background="?android:attr/selectableItemBackground"
+            android:textSize="13sp"
+            android:layout_marginEnd="12dp" />
+
+        <Button
+            android:id="@+id/btn_cert_trust"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/touch_target_min"
+            android:text="@string/cert_trust_and_save"
+            android:textColor="@color/matrix_obsidian"
+            android:background="@drawable/bg_btn_phosphor"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp" />
+    </LinearLayout>
+
+</LinearLayout>

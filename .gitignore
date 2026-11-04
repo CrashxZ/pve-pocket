@@ -1,0 +1,42 @@
+# Build output and temporary directories
+bin/
+gen/
+out/
+build/
+app/build/
+artifacts/
+*.apk
+*.aab
+*.idsig
+
+# Test certificates and generated fixtures
+app/src/test/resources/*.p12
+app/src/test/resources/test_fixtures.p12
+
+# Keystores and private signing materials
+signing/
+*.keystore
+*.jks
+*.p12
+*.key
+
+# Toolchain downloads, extracted debs, and caches
+tools/jdk/
+tools/jdk-*
+tools/android-sdk/
+tools/extracted/
+tools/debs/
+tools/*.tar.gz
+tools/*.zip
+tools/r8.jar
+
+# IDE and OS metadata
+.gradle/
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Execution logs and transcripts
+*.log
+*.jsonl

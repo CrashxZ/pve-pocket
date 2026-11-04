@@ -1,0 +1,65 @@
+name: Build and Verify PVE Pocket APK
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+# Least privilege security policy: strictly read-only GITHUB_TOKEN
+# Explicitly no pull_request_target to prevent untrusted workflow execution
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build APK & Behavioral Verification (Ubuntu x86_64)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Set up OpenJDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Set up Android SDK Tools
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android Platform & Build Tools
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager "platforms;android-29" "build-tools;29.0.3"
+
+      - name: Install Behavioral Test Runtime Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            junit4 \
+            libhamcrest-java \
+            libandroid-json-java \
+            zipalign
+
+      - name: Execute Portable Build Pipeline & Behavioral Test Suite
+        run: |
+          export ANDROID_HOME="$ANDROID_SDK_ROOT"
+          bash tools/build.sh
+
+      - name: Verify APK Signatures & Metadata
+        run: |
+          echo "=================================================="
+          echo "APK Artifact Verification:"
+          ls -lh artifacts/pve-pocket-debug.apk
+          sha256sum artifacts/pve-pocket-debug.apk
+          echo "=================================================="
+
+      - name: Upload APK Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pve-pocket-0.1.0-alpha-apk
+          path: artifacts/pve-pocket-debug.apk
+          if-no-files-found: error
+          retention-days: 14

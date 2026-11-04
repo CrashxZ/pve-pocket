@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base Matrix Operations Theme -->
+    <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorPrimary">@color/matrix_phosphor</item>
+        <item name="android:colorPrimaryDark">@color/matrix_obsidian</item>
+        <item name="android:colorAccent">@color/matrix_cyan</item>
+        <item name="android:windowBackground">@color/matrix_obsidian</item>
+        <item name="android:statusBarColor">@color/matrix_obsidian</item>
+        <item name="android:navigationBarColor">@color/matrix_obsidian</item>
+        <item name="android:textColorPrimary">@color/matrix_text_primary</item>
+        <item name="android:textColorSecondary">@color/matrix_text_secondary</item>
+    </style>
+
+    <style name="AppTheme.Terminal" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/terminal_bg</item>
+        <item name="android:statusBarColor">@color/terminal_bg</item>
+        <item name="android:navigationBarColor">@color/terminal_toolbar_bg</item>
+        <item name="android:textColorPrimary">@color/terminal_text</item>
+    </style>
+
+    <!-- Card and Surface Styles -->
+    <style name="CardView">
+        <item name="android:background">@drawable/bg_card_matrix</item>
+        <item name="android:padding">12dp</item>
+        <item name="android:layout_margin">6dp</item>
+    </style>
+
+    <style name="MatrixCard">
+        <item name="android:background">@drawable/bg_card_matrix</item>
+        <item name="android:padding">12dp</item>
+        <item name="android:layout_margin">6dp</item>
+    </style>
+
+    <!-- Status and Tag Chips -->
+    <style name="StatusChip">
+        <item name="android:paddingLeft">8dp</item>
+        <item name="android:paddingRight">8dp</item>
+        <item name="android:paddingTop">4dp</item>
+        <item name="android:paddingBottom">4dp</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:fontFamily">monospace</item>
+    </style>
+
+    <!-- Control Buttons (Minimum 48dp touch target) -->
+    <style name="ControlButton">
+        <item name="android:minWidth">64dp</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:padding">8dp</item>
+        <item name="android:layout_margin">4dp</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:background">@drawable/bg_btn_outline</item>
+        <item name="android:textColor">@color/matrix_text_primary</item>
+    </style>
+
+    <style name="ControlButton.Primary">
+        <item name="android:background">@drawable/bg_btn_phosphor</item>
+        <item name="android:textColor">@color/matrix_obsidian</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="ControlButton.Danger">
+        <item name="android:background">@drawable/bg_btn_danger</item>
+        <item name="android:textColor">#FFFFFF</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <!-- Terminal Mobile Keyboard Toolbar Button -->
+    <style name="TerminalKeyButton">
+        <item name="android:minWidth">48dp</item>
+        <item name="android:minHeight">44dp</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:background">@drawable/bg_terminal_key</item>
+        <item name="android:textColor">@color/terminal_key_text</item>
+        <item name="android:layout_margin">2dp</item>
+        <item name="android:padding">4dp</item>
+        <item name="android:fontFamily">monospace</item>
+    </style>
+</resources>

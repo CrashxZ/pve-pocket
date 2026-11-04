@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Homelab Pocket Terminal</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body, html {
+            width: 100%;
+            height: 100%;
+            background-color: #060907;
+            color: #00FF66;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 13px;
+            line-height: 1.35;
+            overflow: hidden;
+        }
+        #terminal-container {
+            width: 100%;
+            height: 100%;
+            padding: 10px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            word-break: break-all;
+            white-space: pre-wrap;
+        }
+        .cursor {
+            display: inline-block;
+            width: 8px;
+            height: 15px;
+            background-color: #00FF66;
+            vertical-align: text-bottom;
+            animation: blink 1s step-start infinite;
+        }
+        @keyframes blink {
+            50% { opacity: 0; }
+        }
+        .dim { color: #475C51; }
+        .cyan { color: #00E5FF; }
+        .amber { color: #FFB300; }
+        .red { color: #FF3344; }
+        .white { color: #E1EFE6; }
+        .bold { font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div id="terminal-container"><span id="terminal-content"></span><span class="cursor" id="cursor"></span></div>
+
+    <script>
+        (function() {
+            var container = document.getElementById('terminal-container');
+            var content = document.getElementById('terminal-content');
+
+            // Minimal, robust ANSI escape sequence renderer
+            window.writeTerminal = function(text) {
+                if (!text) return;
+
+                // Handle basic ANSI color and control codes
+                var formatted = text
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/\033\[0m/g, '</span>')
+                    .replace(/\033\[1m/g, '<span class="bold">')
+                    .replace(/\033\[32m/g, '<span class="green">')
+                    .replace(/\033\[36m/g, '<span class="cyan">')
+                    .replace(/\033\[33m/g, '<span class="amber">')
+                    .replace(/\033\[31m/g, '<span class="red">')
+                    .replace(/\033\[37m/g, '<span class="white">')
+                    .replace(/\033\[90m/g, '<span class="dim">')
+                    .replace(/\033\[\?25[hl]/g, '') // show/hide cursor
+                    .replace(/\033\[[0-9;]*[a-zA-Z]/g, '') // strip other escapes
+                    .replace(/\r\n/g, '\n')
+                    .replace(/\r/g, '\n');
+
+                content.innerHTML += formatted;
+                container.scrollTop = container.scrollHeight;
+            };
+
+            window.clearTerminal = function() {
+                content.innerHTML = '';
+            };
+
+            // Keyboard input captured and relayed through narrow bridge
+            document.addEventListener('keydown', function(e) {
+                if (window.TerminalBridge && window.TerminalBridge.onKeyPress) {
+                    var key = e.key;
+                    if (key.length === 1) {
+                        window.TerminalBridge.onKeyPress(key);
+                        e.preventDefault();
+                    } else if (key === 'Enter') {
+                        window.TerminalBridge.onKeyPress('\r');
+                        e.preventDefault();
+                    } else if (key === 'Backspace') {
+                        window.TerminalBridge.onKeyPress('\b');
+                        e.preventDefault();
+                    }
+                }
+            });
+
+            // Focus handler to open keyboard on tap
+            container.addEventListener('click', function() {
+                if (window.TerminalBridge && window.TerminalBridge.requestSoftKeyboard) {
+                    window.TerminalBridge.requestSoftKeyboard();
+                }
+            });
+
+            // Notify bridge that terminal DOM is ready
+            if (window.TerminalBridge && window.TerminalBridge.onTerminalReady) {
+                window.TerminalBridge.onTerminalReady();
+            }
+        })();
+    </script>
+</body>
+</html>

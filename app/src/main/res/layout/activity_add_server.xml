@@ -1,0 +1,370 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Homelab Pocket — Add / Edit Server Connection Activity -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/matrix_obsidian">
+
+    <!-- Top Bar -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:orientation="horizontal"
+        android:background="@color/matrix_surface"
+        android:gravity="center_vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp">
+
+        <TextView
+            android:id="@+id/tv_add_server_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/add_server"
+            android:textColor="@color/matrix_text_primary"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btn_cancel"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/touch_target_min"
+            android:text="@string/cancel"
+            android:textColor="@color/matrix_text_secondary"
+            android:background="?android:attr/selectableItemBackground"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/matrix_surface_border" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <!-- Connection Details Card -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/bg_card_matrix"
+                android:padding="16dp"
+                android:layout_marginBottom="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="CONNECTION PROFILE"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/matrix_phosphor"
+                    android:layout_marginBottom="12dp" />
+
+                <!-- Connection Name -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Profile Name"
+                    android:textSize="12sp"
+                    android:textColor="@color/matrix_text_secondary" />
+
+                <EditText
+                    android:id="@+id/et_server_name"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/touch_target_min"
+                    android:hint="@string/server_name_hint"
+                    android:textColorHint="@color/matrix_text_muted"
+                    android:textColor="@color/matrix_text_primary"
+                    android:background="@drawable/bg_btn_outline"
+                    android:padding="10dp"
+                    android:textSize="14sp"
+                    android:singleLine="true"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginBottom="12dp" />
+
+                <!-- Server Type (PVE vs PDM) -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Architecture Driver"
+                    android:textSize="12sp"
+                    android:textColor="@color/matrix_text_secondary" />
+
+                <RadioGroup
+                    android:id="@+id/rg_server_type"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginBottom="12dp">
+
+                    <RadioButton
+                        android:id="@+id/rb_type_pve"
+                        android:layout_width="wrap_content"
+                        android:layout_height="@dimen/touch_target_min"
+                        android:text="@string/server_type_pve"
+                        android:textColor="@color/matrix_text_primary"
+                        android:checked="true"
+                        android:textSize="13sp" />
+
+                    <RadioButton
+                        android:id="@+id/rb_type_pdm"
+                        android:layout_width="wrap_content"
+                        android:layout_height="@dimen/touch_target_min"
+                        android:text="@string/server_type_pdm"
+                        android:textColor="@color/matrix_text_primary"
+                        android:textSize="13sp" />
+                </RadioGroup>
+
+                <!-- Host / URL -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Endpoint Host / IP"
+                    android:textSize="12sp"
+                    android:textColor="@color/matrix_text_secondary" />
+
+                <EditText
+                    android:id="@+id/et_server_host"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/touch_target_min"
+                    android:hint="@string/server_host_hint"
+                    android:textColorHint="@color/matrix_text_muted"
+                    android:textColor="@color/matrix_text_primary"
+                    android:background="@drawable/bg_btn_outline"
+                    android:padding="10dp"
+                    android:textSize="14sp"
+                    android:fontFamily="monospace"
+                    android:singleLine="true"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginBottom="12dp" />
+
+                <!-- Port -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="HTTPS Port"
+                    android:textSize="12sp"
+                    android:textColor="@color/matrix_text_secondary" />
+
+                <EditText
+                    android:id="@+id/et_server_port"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/touch_target_min"
+                    android:hint="@string/server_port_hint"
+                    android:text="8006"
+                    android:textColorHint="@color/matrix_text_muted"
+                    android:textColor="@color/matrix_text_primary"
+                    android:background="@drawable/bg_btn_outline"
+                    android:padding="10dp"
+                    android:textSize="14sp"
+                    android:fontFamily="monospace"
+                    android:inputType="number"
+                    android:singleLine="true"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginBottom="12dp" />
+
+                <!-- Per-Server Skip TLS Verification Option (Default OFF) -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:background="@drawable/bg_btn_outline"
+                    android:padding="12dp"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginBottom="8dp">
+
+                    <CheckBox
+                        android:id="@+id/cb_skip_tls_verify"
+                        android:layout_width="match_parent"
+                        android:layout_height="@dimen/touch_target_min"
+                        android:text="@string/skip_tls_label"
+                        android:textColor="@color/matrix_text_primary"
+                        android:textStyle="bold"
+                        android:textSize="13sp"
+                        android:checked="false" />
+
+                    <TextView
+                        android:id="@+id/tv_skip_tls_warning"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/skip_tls_warning"
+                        android:textColor="@color/matrix_danger"
+                        android:textSize="11sp"
+                        android:lineSpacingExtra="2dp"
+                        android:layout_marginStart="4dp"
+                        android:layout_marginTop="4dp" />
+                </LinearLayout>
+
+            </LinearLayout>
+
+            <!-- Authentication Card -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/bg_card_matrix"
+                android:padding="16dp"
+                android:layout_marginBottom="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="AUTHENTICATION (KEYSTORE ENCRYPTED)"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/matrix_cyan"
+                    android:layout_marginBottom="12dp" />
+
+                <!-- Auth Type Toggle -->
+                <RadioGroup
+                    android:id="@+id/rg_auth_type"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="12dp">
+
+                    <RadioButton
+                        android:id="@+id/rb_auth_pass"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="@dimen/touch_target_min"
+                        android:text="Tickets"
+                        android:textColor="@color/matrix_text_primary"
+                        android:checked="true"
+                        android:textSize="13sp" />
+
+                    <RadioButton
+                        android:id="@+id/rb_auth_token"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="@dimen/touch_target_min"
+                        android:text="API Token"
+                        android:textColor="@color/matrix_text_primary"
+                        android:textSize="13sp" />
+                </RadioGroup>
+
+                <!-- Username & Password Container -->
+                <LinearLayout
+                    android:id="@+id/layout_auth_pass"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Username + Realm"
+                        android:textSize="12sp"
+                        android:textColor="@color/matrix_text_secondary" />
+
+                    <EditText
+                        android:id="@+id/et_username"
+                        android:layout_width="match_parent"
+                        android:layout_height="@dimen/touch_target_min"
+                        android:hint="@string/server_username_hint"
+                        android:textColorHint="@color/matrix_text_muted"
+                        android:textColor="@color/matrix_text_primary"
+                        android:background="@drawable/bg_btn_outline"
+                        android:padding="10dp"
+                        android:textSize="14sp"
+                        android:singleLine="true"
+                        android:layout_marginTop="4dp"
+                        android:layout_marginBottom="12dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Password"
+                        android:textSize="12sp"
+                        android:textColor="@color/matrix_text_secondary" />
+
+                    <EditText
+                        android:id="@+id/et_password"
+                        android:layout_width="match_parent"
+                        android:layout_height="@dimen/touch_target_min"
+                        android:hint="@string/server_password_hint"
+                        android:textColorHint="@color/matrix_text_muted"
+                        android:textColor="@color/matrix_text_primary"
+                        android:background="@drawable/bg_btn_outline"
+                        android:padding="10dp"
+                        android:textSize="14sp"
+                        android:inputType="textPassword"
+                        android:singleLine="true"
+                        android:layout_marginTop="4dp"
+                        android:layout_marginBottom="4dp" />
+                </LinearLayout>
+
+                <!-- API Token Container -->
+                <LinearLayout
+                    android:id="@+id/layout_auth_token"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Token Header / UUID"
+                        android:textSize="12sp"
+                        android:textColor="@color/matrix_text_secondary" />
+
+                    <EditText
+                        android:id="@+id/et_token"
+                        android:layout_width="match_parent"
+                        android:layout_height="@dimen/touch_target_min"
+                        android:hint="@string/server_token_hint"
+                        android:textColorHint="@color/matrix_text_muted"
+                        android:textColor="@color/matrix_text_primary"
+                        android:background="@drawable/bg_btn_outline"
+                        android:padding="10dp"
+                        android:textSize="13sp"
+                        android:fontFamily="monospace"
+                        android:inputType="textPassword"
+                        android:singleLine="true"
+                        android:layout_marginTop="4dp"
+                        android:layout_marginBottom="4dp" />
+                </LinearLayout>
+
+            </LinearLayout>
+
+            <!-- Save Connection Button -->
+            <Button
+                android:id="@+id/btn_save_server"
+                android:layout_width="match_parent"
+                android:layout_height="@dimen/touch_target_min"
+                android:text="@string/save"
+                android:background="@drawable/bg_btn_phosphor"
+                android:textColor="@color/matrix_obsidian"
+                android:textStyle="bold"
+                android:textSize="15sp"
+                android:layout_marginBottom="12dp" />
+
+            <!-- Remove Button (visible when editing) -->
+            <Button
+                android:id="@+id/btn_delete_server"
+                android:layout_width="match_parent"
+                android:layout_height="@dimen/touch_target_min"
+                android:text="@string/delete_server"
+                android:background="@drawable/bg_btn_outline"
+                android:textColor="@color/matrix_danger"
+                android:textSize="13sp"
+                android:visibility="gone" />
+
+        </LinearLayout>
+    </ScrollView>
+
+</LinearLayout>

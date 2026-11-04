@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- PVE Pocket — Honest Terminal Fallback Layout (Pure Native Views, No WebView Engine Dependency) -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/terminal_bg">
+
+    <!-- Terminal Top Bar: Back button + Target Name + Status -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:orientation="horizontal"
+        android:background="@color/terminal_toolbar_bg"
+        android:gravity="center_vertical"
+        android:paddingStart="8dp"
+        android:paddingEnd="12dp">
+
+        <Button
+            android:id="@+id/btn_terminal_back"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/touch_target_min"
+            android:text="&lt; BACK"
+            android:textColor="@color/matrix_phosphor"
+            android:background="?android:attr/selectableItemBackground"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:layout_marginStart="6dp">
+
+            <TextView
+                android:id="@+id/tv_terminal_target"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace"
+                android:textColor="@color/matrix_text_primary" />
+
+            <TextView
+                android:id="@+id/tv_terminal_host_info"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="10sp"
+                android:fontFamily="monospace"
+                android:textColor="@color/matrix_text_secondary" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tv_terminal_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="11sp"
+            android:fontFamily="monospace"
+            android:textColor="@color/matrix_warning" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/matrix_surface_border" />
+
+    <!-- Scrollable Honest Terminal Disclosure & External Fallbacks -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:id="@+id/layout_live_disabled"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="20dp"
+            android:gravity="center"
+            android:visibility="visible">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/bg_card_matrix"
+                android:padding="20dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="&gt;_ BUILT-IN LIVE TERMINAL DISABLED"
+                    android:textColor="@color/matrix_warning"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    android:fontFamily="monospace"
+                    android:layout_marginBottom="12dp" />
+
+                <TextView
+                    android:id="@+id/tv_live_terminal_disclosure"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Proxmox termproxy / vncwebsocket streaming requires a dedicated pinned WebSocket transport. In this release, built-in live streaming is disabled to ensure honest operations and prevent false-success prompts or unauthenticated exposure.\n\nPlease connect directly using an external SSH client or the official Proxmox Web Console."
+                    android:textColor="@color/matrix_text_primary"
+                    android:textSize="13sp"
+                    android:lineSpacingExtra="3dp"
+                    android:layout_marginBottom="16dp" />
+
+                <!-- Command Copy Box -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:background="@drawable/bg_topology_strip"
+                    android:padding="10dp"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="16dp">
+
+                    <TextView
+                        android:id="@+id/tv_ssh_command"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="ssh root@host"
+                        android:textColor="@color/matrix_phosphor"
+                        android:textSize="12sp"
+                        android:fontFamily="monospace" />
+
+                    <Button
+                        android:id="@+id/btn_copy_ssh"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:text="COPY"
+                        android:textColor="@color/matrix_cyan"
+                        android:background="@drawable/bg_btn_outline"
+                        android:textSize="11sp"
+                        android:fontFamily="monospace"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp" />
+                </LinearLayout>
+
+                <Button
+                    android:id="@+id/btn_launch_external_ssh"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/touch_target_min"
+                    android:text="Launch External SSH Client"
+                    android:textColor="@color/matrix_obsidian"
+                    android:background="@drawable/bg_btn_phosphor"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:fontFamily="monospace"
+                    android:layout_marginBottom="10dp" />
+
+                <Button
+                    android:id="@+id/btn_launch_web_console"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/touch_target_min"
+                    android:text="Open Proxmox Web Console"
+                    android:textColor="@color/matrix_cyan"
+                    android:background="@drawable/bg_btn_outline"
+                    android:textSize="13sp"
+                    android:fontFamily="monospace"
+                    android:layout_marginBottom="10dp" />
+
+                <Button
+                    android:id="@+id/btn_show_console_info"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/touch_target_min"
+                    android:text="Console Architecture (noVNC vs Serial)"
+                    android:textColor="@color/matrix_text_secondary"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:textSize="12sp"
+                    android:fontFamily="monospace" />
+            </LinearLayout>
+        </LinearLayout>
+    </ScrollView>
+
+</LinearLayout>

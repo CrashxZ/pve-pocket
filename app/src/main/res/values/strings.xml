@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PVE Pocket</string>
+
+    <!-- Navigation -->
+    <string name="nav_dashboard">Overview</string>
+    <string name="nav_nodes">Hosts</string>
+    <string name="nav_guests">Guests</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Dashboard -->
+    <string name="dashboard_title">Fleet Overview</string>
+    <string name="no_servers_title">No servers configured</string>
+    <string name="no_servers_msg">Tap + Add Server to connect your Proxmox VE or PDM instance.</string>
+    <string name="refresh">Refresh</string>
+    <string name="last_updated">Updated: %1$s</string>
+    <string name="fleet_cpu">Fleet CPU</string>
+    <string name="fleet_ram">Fleet RAM</string>
+    <string name="fleet_nodes">Nodes</string>
+    <string name="fleet_guests">Guests</string>
+    <string name="online">Online</string>
+    <string name="offline">Offline</string>
+    <string name="unknown">Unknown</string>
+    <string name="nodes_online_offline">%1$d online, %2$d offline</string>
+    <string name="guests_running_stopped">%1$d running, %2$d stopped</string>
+
+    <!-- Fleet Topology & Health Strip -->
+    <string name="topology_quorum_ok">● FLEET ONLINE</string>
+    <string name="topology_standalone">● STANDALONE HOST</string>
+    <string name="topology_offline_count">%1$d OFFLINE</string>
+    <string name="empty_first_run_title">&gt;_ NO CONNECTIONS</string>
+    <string name="empty_first_run_desc">Connect your Proxmox VE fleet to begin monitoring and managing your homelab.</string>
+    <string name="empty_add_server_btn">+ Add Server Connection</string>
+    <string name="empty_guests_title">No Guests Found</string>
+    <string name="empty_guests_desc">No virtual machines or containers match the current filter.</string>
+
+    <!-- Node -->
+    <string name="node_cpu">CPU: %1$.1f%%</string>
+    <string name="node_ram">RAM: %1$s / %2$s</string>
+    <string name="node_disk">Disk: %1$s / %2$s</string>
+    <string name="node_net">Net: ↓%1$s ↑%2$s</string>
+    <string name="node_uptime">Up: %1$s</string>
+    <string name="node_pve_version">PVE %1$s</string>
+    <string name="node_offline_msg">Host is offline or unreachable</string>
+    <string name="node_terminal">Node Shell</string>
+    <string name="resource_note">RAM displays host physical usage. Guest allocations are from this host pool — capacity-weighted without double counting.</string>
+
+    <!-- Guests -->
+    <string name="guest_vm">VM</string>
+    <string name="guest_lxc">LXC</string>
+    <string name="guest_running">RUNNING</string>
+    <string name="guest_stopped">STOPPED</string>
+    <string name="guest_paused">PAUSED</string>
+    <string name="guest_cpu">CPU: %1$.1f%%</string>
+    <string name="guest_ram">RAM: %1$s / %2$s</string>
+    <string name="search_hint">Search VMs and containers…</string>
+    <string name="filter_all">ALL</string>
+    <string name="filter_running">RUNNING</string>
+    <string name="filter_stopped">STOPPED</string>
+    <string name="filter_favorites">★ FAVS</string>
+    <string name="favorite_add">Add to favorites</string>
+    <string name="favorite_remove">Remove from favorites</string>
+
+    <!-- VM Controls -->
+    <string name="action_start">Start</string>
+    <string name="action_shutdown">Shutdown</string>
+    <string name="action_reboot">Reboot</string>
+    <string name="action_force_stop">Force Stop</string>
+    <string name="confirm_force_stop_title">Force stop %1$s?</string>
+    <string name="confirm_force_stop_msg">This is equivalent to pulling the physical power cord. Any unsaved data in the guest may be corrupted.\n\nAre you sure you want to proceed?</string>
+    <string name="confirm_force_stop_yes">Force Stop</string>
+    <string name="confirm_cancel">Cancel</string>
+    <string name="task_pending">Starting task…</string>
+    <string name="task_running">Task running…</string>
+    <string name="task_success">Completed: %1$s</string>
+    <string name="task_failed">Failed: %1$s</string>
+    <string name="task_timeout">Timed out waiting for task</string>
+    <string name="double_submit_blocked">Operation already in progress for this target.</string>
+
+    <!-- Terminal -->
+    <string name="terminal_title">Terminal: %1$s</string>
+    <string name="terminal_connecting">Connecting termproxy…</string>
+    <string name="terminal_connected">Connected</string>
+    <string name="terminal_disconnected">Disconnected</string>
+    <string name="terminal_error">Connection error: %1$s</string>
+    <string name="terminal_key_ctrl">Ctrl</string>
+    <string name="terminal_key_esc">Esc</string>
+    <string name="terminal_key_tab">Tab</string>
+    <string name="terminal_key_up">↑</string>
+    <string name="terminal_key_down">↓</string>
+    <string name="terminal_key_left">←</string>
+    <string name="terminal_key_right">→</string>
+    <string name="terminal_key_paste">Paste</string>
+
+    <!-- QEMU terminal disclosure -->
+    <string name="qemu_terminal_unavailable_title">Console Architecture: QEMU VM</string>
+    <string name="qemu_terminal_unavailable_msg">Standard Proxmox VE provides graphical noVNC consoles for QEMU VMs. A direct serial/text shell is not provisioned via PVE API.\n\nSupported text terminals:\n• Host Shell (PVE termproxy ✓)\n• LXC Containers (PVE termproxy ✓)\n\nFor QEMU VMs, please connect via SSH directly or launch noVNC in your browser:\n  https://%1$s:%2$d</string>
+    <string name="qemu_external_ssh">Open External SSH</string>
+    <string name="qemu_open_browser_console">Launch Browser noVNC</string>
+
+    <!-- Settings & Onboarding -->
+    <string name="settings_title">Settings</string>
+    <string name="servers_title">Server Connections</string>
+    <string name="add_server">+ Add Server</string>
+    <string name="server_type_pve">Proxmox VE (Standalone)</string>
+    <string name="server_type_pdm">Proxmox Datacenter Manager (PDM)</string>
+    <string name="server_name_hint">Connection Name (e.g. Home Lab PVE)</string>
+    <string name="server_host_hint">Host or IP (e.g. 192.0.2.10)</string>
+    <string name="server_port_hint">Port (8006 for PVE, 8443 for PDM)</string>
+    <string name="server_username_hint">Username (e.g. root@pam)</string>
+    <string name="server_password_hint">Password</string>
+    <string name="server_token_hint">API Token (PVEAPIToken=user@realm!tokenid=UUID)</string>
+    <string name="server_auth_type_pass">User + Password (Tickets)</string>
+    <string name="server_auth_type_token">API Token</string>
+    <string name="cert_fingerprint_title">TLS Certificate Fingerprint</string>
+    <string name="cert_first_connect_msg">Server presented TLS certificate:\n\nSHA-256: %1$s\n\nVerify this fingerprint matches your server before trusting it. This fingerprint will be pinned in your Keystore.</string>
+    <string name="cert_changed_title">TLS Certificate Mismatch!</string>
+    <string name="cert_changed_msg">The server certificate fingerprint differs from the pinned fingerprint:\n\nExpected: %1$s\nReceived: %2$s\n\nPossible certificate rotation or MITM attempt. Connection refused.</string>
+    <string name="cert_trust_and_save">Trust and Pin</string>
+    <string name="cert_cancel">Reject Connection</string>
+    <string name="save">Save Connection</string>
+    <string name="cancel">Cancel</string>
+    <string name="delete_server">Remove Server</string>
+    <string name="delete_server_confirm">Delete connection and all associated credentials?</string>
+    <string name="skip_tls_label">Skip TLS verification (Insecure)</string>
+    <string name="skip_tls_warning">⚠ WARNING: Skipping TLS verification disables certificate pinning and hostname verification for this server. Your username, password, and API tokens can be intercepted by a Machine-In-The-Middle (MITM) on your local network. Use only on trusted isolated networks.</string>
+    <string name="poll_interval_label">Telemetry Refresh Rate</string>
+    <string name="poll_off">Manual Only</string>
+    <string name="poll_30s">30 Seconds</string>
+    <string name="poll_1m">1 Minute</string>
+    <string name="poll_5m">5 Minutes</string>
+    <string name="session_lock">Lock Credential Session</string>
+    <string name="pdm_status">PDM Integration Status</string>
+
+    <!-- Errors & Feedback -->
+    <string name="error_no_credentials">No credentials configured for this host.</string>
+    <string name="error_auth_expired">Session expired. Renewing Proxmox ticket…</string>
+    <string name="error_permission_denied">Permission denied. Check Proxmox role privileges.</string>
+    <string name="error_offline">Host unreachable. Verified offline state.</string>
+    <string name="error_tls">TLS security error: certificate verification failed.</string>
+    <string name="error_generic">Error: %1$s</string>
+    <string name="tap_to_retry">Tap to retry</string>
+</resources>
