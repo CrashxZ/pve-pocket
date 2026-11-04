@@ -20,11 +20,11 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      - name: Set up OpenJDK 21 (Temurin)
+      - name: Set up OpenJDK 17 (Temurin)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: '17'
 
       - name: Set up Android SDK Tools
         uses: android-actions/setup-android@v3

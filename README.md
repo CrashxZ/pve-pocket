@@ -77,9 +77,9 @@ PVE Pocket uses a transparent, portable shell-based build pipeline supporting bo
 ### Option A: Building on Ubuntu x86_64 / Debian (Aligned with GitHub Actions Setup)
 
 ```bash
-# 1. Install prerequisites (JDK 21, test dependencies, packaging utilities)
+# 1. Install prerequisites (JDK 17, test dependencies, packaging utilities)
 sudo apt-get update
-sudo apt-get install -y openjdk-21-jdk junit4 libhamcrest-java libandroid-json-java zipalign
+sudo apt-get install -y openjdk-17-jdk junit4 libhamcrest-java libandroid-json-java zipalign
 
 # 2. Install Android SDK Platform 29 and Build-Tools (d8, aapt) via sdkmanager
 # (Ubuntu apt packages alone do not install platform-29 or d8; install via sdkmanager matching CI)
@@ -94,6 +94,8 @@ bash tools/build.sh
 > **CI / Ubuntu Runner Qualification:** The Ubuntu x86_64 build recipe and `.github/workflows/ci.yml` align with standard Android SDK tooling, but remote GitHub Actions CI runner execution remains untested until actual GitHub Actions runs execute in a remote cloud runner. Local verification receipts reflect execution on the ARM64 reference host.
 
 ### Option B: Building on Raspberry Pi (ARM64)
+
+> **Note:** The local Raspberry Pi reference host environment remains on OpenJDK 21, whereas Ubuntu x86_64 and GitHub Actions CI target OpenJDK 17.
 
 ```bash
 # 1. Run user-local bootstrap (verifies pinned SHA-256 tool checksums and writes tools/env.sh)
