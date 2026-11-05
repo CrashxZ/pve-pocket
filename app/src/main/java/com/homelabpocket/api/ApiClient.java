@@ -127,6 +127,11 @@ public class ApiClient {
         return executeRequest(path, "GET", null, auth, budgetMs);
     }
 
+    public String getWithDeadline(String path, AuthCredentials auth, long deadlineNanos) throws ApiException, IOException {
+        long remainingMs = (deadlineNanos > 0) ? (deadlineNanos - System.nanoTime()) / 1_000_000L : DEFAULT_TOTAL_BUDGET_MS;
+        return executeRequestInternalWithDeadline(path, "GET", null, auth, deadlineNanos, remainingMs).body;
+    }
+
     /**
      * HTTP GET with authentication headers and explicit connect/read timeouts.
      */
@@ -147,6 +152,12 @@ public class ApiClient {
     public String post(String path, String formBody, AuthCredentials auth, long budgetMs)
             throws ApiException, IOException {
         return executeRequest(path, "POST", formBody, auth, budgetMs);
+    }
+
+    public String postWithDeadline(String path, String formBody, AuthCredentials auth, long deadlineNanos)
+            throws ApiException, IOException {
+        long remainingMs = (deadlineNanos > 0) ? (deadlineNanos - System.nanoTime()) / 1_000_000L : DEFAULT_TOTAL_BUDGET_MS;
+        return executeRequestInternalWithDeadline(path, "POST", formBody, auth, deadlineNanos, remainingMs).body;
     }
 
     /**
@@ -185,12 +196,37 @@ public class ApiClient {
         if (remainingBudgetMs <= 0) {
             throw new ApiException(0, "Request deadline already expired before dispatch (" + remainingBudgetMs + "ms remaining)");
         }
-        String cleanUser = (username != null) ? username.trim() : "";
-        String authUser = (!cleanUser.contains("@") && !cleanUser.isEmpty()) ? (cleanUser + "@pam") : cleanUser;
-        String formBody = "username=" + urlEncode(authUser)
-                + "&password=" + urlEncode(password != null ? password : "");
-        ResponseData resp = executeRequestInternal("/access/ticket", "POST", formBody, null, remainingBudgetMs);
-        return parseTicketResponse(resp.body, resp.setCookieHeaders);
+        long deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(remainingBudgetMs);
+        return authenticateWithDeadline(username, password, deadlineNanos);
+    }
+
+    /**
+     * POST to /access/ticket to obtain a short-lived PVE/PDM ticket carrying an absolute monotonic deadline.
+     * Password is used only here and NOT stored after this call.
+     */
+    public AuthCredentials authenticateWithDeadline(String username, String password, long deadlineNanos)
+            throws ApiException, IOException {
+        if (deadlineNanos > 0) {
+            long remainingNanos = deadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0) {
+                throw new ApiException(0, "Request deadline already expired before dispatch (" + (remainingNanos / 1_000_000L) + "ms remaining)");
+            }
+            long budgetMs = remainingNanos / 1_000_000L;
+            String cleanUser = (username != null) ? username.trim() : "";
+            String authUser = (!cleanUser.contains("@") && !cleanUser.isEmpty()) ? (cleanUser + "@pam") : cleanUser;
+            String formBody = "username=" + urlEncode(authUser)
+                    + "&password=" + urlEncode(password != null ? password : "");
+            if (System.nanoTime() >= deadlineNanos) {
+                throw new ApiException(0, "Request deadline expired during auth form preparation");
+            }
+            ResponseData resp = executeRequestInternalWithDeadline("/access/ticket", "POST", formBody, null, deadlineNanos, budgetMs);
+            if (System.nanoTime() >= deadlineNanos) {
+                throw new ApiException(0, "Request deadline expired after ticket authentication response");
+            }
+            return parseTicketResponse(resp.body, resp.setCookieHeaders);
+        } else {
+            return authenticate(username, password, 15_000L);
+        }
     }
 
     private String executeRequest(String path, String method, String formBody, AuthCredentials auth, long budgetMs)
@@ -219,11 +255,27 @@ public class ApiClient {
         long startNanos = System.nanoTime();
         long budgetNanos = TimeUnit.MILLISECONDS.toNanos(budgetMs);
         long deadlineNanos = startNanos + budgetNanos;
+        return executeRequestInternalWithDeadline(path, method, formBody, auth, deadlineNanos, budgetMs);
+    }
+
+    private ResponseData executeRequestInternalWithDeadline(String path, String method, String formBody, AuthCredentials auth, long deadlineNanos, long budgetMs)
+            throws ApiException, IOException {
+
+        if (deadlineNanos > 0) {
+            long remainingNanos = deadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0) {
+                throw new ApiException(0, "Request deadline already expired before dispatch (" + (remainingNanos / 1_000_000L) + "ms remaining)");
+            }
+        }
 
         final AtomicBoolean timedOut = new AtomicBoolean(false);
         final Thread callingThread = Thread.currentThread();
 
         HttpsURLConnection conn = openConnection(path);
+
+        long watchdogDelayMs = (deadlineNanos > 0)
+                ? Math.max(1, (deadlineNanos - System.nanoTime()) / 1_000_000L)
+                : Math.max(1, budgetMs);
 
         // Schedule watchdog to abort socket and interrupt blocking call if deadline is reached
         ScheduledFuture<?> watchdog = TIMEOUT_WATCHDOG.schedule(() -> {
@@ -232,7 +284,7 @@ public class ApiClient {
                 conn.disconnect();
             } catch (Throwable ignored) {}
             callingThread.interrupt();
-        }, Math.max(1, budgetMs), TimeUnit.MILLISECONDS);
+        }, watchdogDelayMs, TimeUnit.MILLISECONDS);
 
         try {
             conn.setRequestMethod(method);
@@ -337,6 +389,9 @@ public class ApiClient {
             }
 
             String body = sb.toString();
+            if (deadlineNanos > 0 && (System.nanoTime() >= deadlineNanos || timedOut.get())) {
+                throw new SocketTimeoutException("Total request deadline exceeded (" + budgetMs + "ms limit) after reading response body");
+            }
             if (code == 401) {
                 throw new ApiException(401, "Authentication failed or token expired. Please re-authenticate.");
             } else if (code == 403) {

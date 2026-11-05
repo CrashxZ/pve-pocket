@@ -337,9 +337,10 @@ public class UiPolishViewModelBindingTest {
                 "pve-1", "Main PVE", "pve.local", 8006,
                 ServerConfig.ServerType.PVE, "CC:DD");
 
-        // PDM: power controls and direct shells MUST be disabled/hidden
+        // PDM: guest power IS allowed; host power, host shell, and guest terminal shell are disabled
         assertTrue(UiPresentationPolicy.isPdm(pdmServer));
-        assertFalse("Guest power actions must be hidden on PDM", UiPresentationPolicy.isGuestPowerAllowed(pdmServer));
+        assertTrue("Guest power actions allowed on PDM", UiPresentationPolicy.isGuestPowerAllowed(pdmServer));
+        assertFalse("Host power actions must be hidden on PDM", UiPresentationPolicy.isHostPowerAllowed(pdmServer));
         assertFalse("Host shell must be hidden on PDM", UiPresentationPolicy.isHostShellAllowed(pdmServer));
         assertFalse("Guest console must be hidden on PDM", UiPresentationPolicy.isGuestConsoleAllowed(pdmServer));
 
@@ -349,11 +350,60 @@ public class UiPolishViewModelBindingTest {
         assertTrue(UiPresentationPolicy.PDM_MONITORING_DETAIL.contains("Proxmox Datacenter Manager"));
         assertTrue(UiPresentationPolicy.PDM_MONITORING_DETAIL.contains("web console"));
 
-        // PVE: power controls and direct shells MUST be allowed
+        // PVE: all controls allowed
         assertFalse(UiPresentationPolicy.isPdm(pveServer));
         assertTrue("Guest power actions allowed on PVE", UiPresentationPolicy.isGuestPowerAllowed(pveServer));
+        assertTrue("Host power actions allowed on PVE", UiPresentationPolicy.isHostPowerAllowed(pveServer));
         assertTrue("Host shell allowed on PVE", UiPresentationPolicy.isHostShellAllowed(pveServer));
         assertTrue("Guest console allowed on PVE", UiPresentationPolicy.isGuestConsoleAllowed(pveServer));
+    }
+
+    @Test
+    public void testGuestDetailViewBindingForPdmAndPve() {
+        ServerConfig pdmServer = new ServerConfig(
+                "pdm-1", "Datacenter Manager", "pdm.local", 8443,
+                ServerConfig.ServerType.PDM, "AA:BB");
+        ServerConfig pveServer = new ServerConfig(
+                "pve-1", "Main PVE", "pve.local", 8006,
+                ServerConfig.ServerType.PVE, "CC:DD");
+
+        GuestInfo runningGuest = new GuestInfo(
+                101, "vm-prod", GuestInfo.GuestType.QEMU, GuestInfo.RunState.RUNNING,
+                "west/pve-1", "pdm-1",
+                0.25, 4, 2048, 4096, 0, 0, 100, 200, 3600, "", false, 1000L);
+
+        GuestInfo stoppedGuest = new GuestInfo(
+                102, "lxc-test", GuestInfo.GuestType.LXC, GuestInfo.RunState.STOPPED,
+                "west/pve-1", "pdm-1",
+                0.0, 2, 0, 1024, 0, 0, 0, 0, 0, "", false, 1000L);
+
+        // PDM running guest binding:
+        UiPresentationPolicy.GuestDetailBindingState pdmRunning =
+                UiPresentationPolicy.evaluateGuestDetailBinding(runningGuest, pdmServer);
+        assertTrue("Power card must be visible on PDM", pdmRunning.isPowerCardVisible);
+        assertFalse("Start button hidden when running", pdmRunning.isStartButtonVisible);
+        assertTrue("Shutdown button visible when running", pdmRunning.isShutdownButtonVisible);
+        assertTrue("Reboot button visible when running (shows honest notice on click)", pdmRunning.isRebootButtonVisible);
+        assertTrue("Force stop button visible when running", pdmRunning.isForceStopButtonVisible);
+        assertFalse("Terminal card hidden on PDM", pdmRunning.isTerminalCardVisible);
+        assertFalse("Terminal button hidden on PDM", pdmRunning.isTerminalButtonVisible);
+        assertFalse("PDM monitoring notice card hidden since power controls active", pdmRunning.isPdmNoticeVisible);
+
+        // PDM stopped guest binding:
+        UiPresentationPolicy.GuestDetailBindingState pdmStopped =
+                UiPresentationPolicy.evaluateGuestDetailBinding(stoppedGuest, pdmServer);
+        assertTrue("Power card must be visible on PDM", pdmStopped.isPowerCardVisible);
+        assertTrue("Start button visible when stopped", pdmStopped.isStartButtonVisible);
+        assertFalse("Shutdown button hidden when stopped", pdmStopped.isShutdownButtonVisible);
+        assertFalse("Reboot button hidden when stopped", pdmStopped.isRebootButtonVisible);
+        assertFalse("Force stop button hidden when stopped", pdmStopped.isForceStopButtonVisible);
+
+        // PVE running guest binding:
+        UiPresentationPolicy.GuestDetailBindingState pveRunning =
+                UiPresentationPolicy.evaluateGuestDetailBinding(runningGuest, pveServer);
+        assertTrue("Power card visible on PVE", pveRunning.isPowerCardVisible);
+        assertTrue("Terminal card visible on PVE", pveRunning.isTerminalCardVisible);
+        assertTrue("Terminal button visible on PVE", pveRunning.isTerminalButtonVisible);
     }
 
     // =========================================================================
@@ -833,5 +883,63 @@ public class UiPolishViewModelBindingTest {
         assertTrue("tv_node_remote must follow header", remoteIndex > headerEnd);
         assertTrue("tv_node_remote must have match_parent for clean wrapping",
                 xml.contains("android:id=\"@+id/tv_node_remote\"\n        android:layout_width=\"match_parent\""));
+    }
+
+    @Test
+    public void testUnknownGuestHonestUiBindingAndControlsUnavailable() {
+        ServerConfig pdmServer = new ServerConfig(
+                "pdm-1", "Datacenter Manager", "pdm.local", 8443,
+                ServerConfig.ServerType.PDM, "AA:BB");
+        ServerConfig pveServer = new ServerConfig(
+                "pve-1", "Main PVE", "pve.local", 8006,
+                ServerConfig.ServerType.PVE, "CC:DD");
+
+        GuestInfo unknownGuest = new GuestInfo(
+                200, "unresponsive-vm", GuestInfo.GuestType.QEMU,
+                GuestInfo.RunState.UNKNOWN, "node-1", "pve-1",
+                Double.NaN, 2, -1, 4_000_000_000L,
+                0, 0, 0, 0, 0, "", false, 1000L);
+
+        // 1. Detail view binding: UNKNOWN must NOT render as stopped or enable Start
+        UiPresentationPolicy.GuestDetailBindingState detailPve =
+                UiPresentationPolicy.evaluateGuestDetailBinding(unknownGuest, pveServer);
+        assertFalse("Power card must NOT be visible for UNKNOWN guest on PVE", detailPve.isPowerCardVisible);
+        assertFalse("Start button must NOT be visible for UNKNOWN guest", detailPve.isStartButtonVisible);
+        assertFalse("Shutdown button must NOT be visible for UNKNOWN guest", detailPve.isShutdownButtonVisible);
+        assertFalse("Reboot button must NOT be visible for UNKNOWN guest", detailPve.isRebootButtonVisible);
+        assertFalse("Force stop button must NOT be visible for UNKNOWN guest", detailPve.isForceStopButtonVisible);
+        assertFalse("Terminal card must NOT be visible for UNKNOWN guest", detailPve.isTerminalCardVisible);
+        assertFalse("Terminal button must NOT be visible for UNKNOWN guest", detailPve.isTerminalButtonVisible);
+
+        UiPresentationPolicy.GuestDetailBindingState detailPdm =
+                UiPresentationPolicy.evaluateGuestDetailBinding(unknownGuest, pdmServer);
+        assertFalse("Power card must NOT be visible for UNKNOWN guest on PDM", detailPdm.isPowerCardVisible);
+        assertFalse("Start button must NOT be visible for UNKNOWN guest on PDM", detailPdm.isStartButtonVisible);
+
+        // 2. Card view binding: UNKNOWN must NOT render as stopped or have any power buttons enabled
+        UiPresentationPolicy.GuestCardBindingState cardPve =
+                UiPresentationPolicy.evaluateGuestCardBinding(unknownGuest, pveServer);
+        assertFalse("Metrics must NOT be visible for UNKNOWN guest", cardPve.isMetricsVisible);
+        assertFalse("Start button must NOT be visible for UNKNOWN guest", cardPve.isStartButtonVisible);
+        assertFalse("Start button must NOT be enabled for UNKNOWN guest", cardPve.isStartButtonEnabled);
+        assertFalse("Shutdown button must NOT be visible for UNKNOWN guest", cardPve.isShutdownButtonVisible);
+        assertFalse("Shutdown button must NOT be enabled for UNKNOWN guest", cardPve.isShutdownButtonEnabled);
+        assertFalse("Reboot button must NOT be visible for UNKNOWN guest", cardPve.isRebootButtonVisible);
+        assertFalse("Reboot button must NOT be enabled for UNKNOWN guest", cardPve.isRebootButtonEnabled);
+        assertFalse("Force stop button must NOT be visible for UNKNOWN guest", cardPve.isForceStopButtonVisible);
+        assertFalse("Force stop button must NOT be enabled for UNKNOWN guest", cardPve.isForceStopButtonEnabled);
+        assertFalse("Console button must NOT be visible for UNKNOWN guest", cardPve.isConsoleVisible);
+        assertEquals("Status text must be UNKNOWN", "UNKNOWN", cardPve.statusText);
+
+        // 3. Fail-closed target validation: UNKNOWN state MUST fail validation
+        assertFalse("Target validation must reject UNKNOWN guest fail-closed",
+                UiPresentationPolicy.isGuestTargetValid(unknownGuest, "node-1", 200, GuestInfo.GuestType.QEMU));
+
+        // 4. Fleet aggregation: UNKNOWN guest must not be counted as stopped
+        java.util.List<GuestInfo> guests = java.util.Arrays.asList(unknownGuest);
+        UiPresentationPolicy.FleetCapacitySummary summary =
+                UiPresentationPolicy.calculateFleetCapacity(null, guests);
+        assertEquals("Running guests count", 0, summary.runningGuests);
+        assertEquals("Stopped guests count must NOT include UNKNOWN", 0, summary.stoppedGuests);
     }
 }

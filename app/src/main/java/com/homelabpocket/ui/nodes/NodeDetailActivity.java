@@ -452,6 +452,7 @@ public class NodeDetailActivity extends Activity {
 
                     try {
                         storagePools = pdm.fetchNodeStorage(nodeName, creds);
+                        storagePools = pdm.enrichStoragePools(nodeName, storagePools, creds);
                     } catch (ApiException e) {
                         storageError = e.getUserMessage();
                     } catch (Exception e) {

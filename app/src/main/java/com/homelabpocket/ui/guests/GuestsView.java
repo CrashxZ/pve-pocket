@@ -23,6 +23,7 @@ import com.homelabpocket.HomelabApp;
 import com.homelabpocket.R;
 import com.homelabpocket.api.ApiException;
 import com.homelabpocket.api.FavoritesStore;
+import com.homelabpocket.api.PdmApiDriver;
 import com.homelabpocket.api.PveApiDriver;
 import com.homelabpocket.model.AuthCredentials;
 import com.homelabpocket.model.GuestInfo;
@@ -55,6 +56,16 @@ public class GuestsView {
     private int activeFilter = 0; // 0=All, 1=Running, 2=Stopped, 3=Favs
     private String currentSearchQuery = "";
     private List<GuestInfo> lastGuestList = new ArrayList<>();
+    private PowerActionTask currentPowerTask;
+
+    public void cancelActiveTasks() {
+        if (currentPowerTask != null) {
+            currentPowerTask.cancel(true);
+            if (currentPowerTask.lifecycleOwner != null) {
+                currentPowerTask.lifecycleOwner.requestCancel();
+            }
+        }
+    }
 
     public GuestsView(MainActivity activity) {
         this.activity = activity;
@@ -205,7 +216,8 @@ public class GuestsView {
         }
 
         // Status Badge
-        boolean isRunning = g.state == GuestInfo.RunState.RUNNING;
+        boolean isRunning = (g.state == GuestInfo.RunState.RUNNING);
+        boolean isStopped = (g.state == GuestInfo.RunState.STOPPED);
         if (isRunning) {
             tvStatus.setText("RUNNING");
             tvStatus.setBackgroundResource(R.drawable.bg_chip_running);
@@ -218,19 +230,41 @@ public class GuestsView {
             tvRam.setText("RAM: " + JsonUtil.formatBytes(g.memUsed) + " / " + JsonUtil.formatBytes(g.memMax));
 
             btnStart.setVisibility(View.GONE);
+            btnStart.setEnabled(false);
             btnShutdown.setVisibility(View.VISIBLE);
+            btnShutdown.setEnabled(true);
             btnReboot.setVisibility(View.VISIBLE);
+            btnReboot.setEnabled(true);
             btnForceStop.setVisibility(View.VISIBLE);
-        } else {
+            btnForceStop.setEnabled(true);
+        } else if (isStopped) {
             tvStatus.setText("STOPPED");
             tvStatus.setBackgroundResource(R.drawable.bg_chip_stopped);
             tvStatus.setTextColor(activity.getResources().getColor(R.color.matrix_text_muted));
             layoutMetrics.setVisibility(View.GONE);
 
             btnStart.setVisibility(View.VISIBLE);
+            btnStart.setEnabled(true);
             btnShutdown.setVisibility(View.GONE);
+            btnShutdown.setEnabled(false);
             btnReboot.setVisibility(View.GONE);
+            btnReboot.setEnabled(false);
             btnForceStop.setVisibility(View.GONE);
+            btnForceStop.setEnabled(false);
+        } else {
+            tvStatus.setText("UNKNOWN");
+            tvStatus.setBackgroundResource(R.drawable.bg_chip_stopped);
+            tvStatus.setTextColor(activity.getResources().getColor(R.color.matrix_text_muted));
+            layoutMetrics.setVisibility(View.GONE);
+
+            btnStart.setVisibility(View.GONE);
+            btnStart.setEnabled(false);
+            btnShutdown.setVisibility(View.GONE);
+            btnShutdown.setEnabled(false);
+            btnReboot.setVisibility(View.GONE);
+            btnReboot.setEnabled(false);
+            btnForceStop.setVisibility(View.GONE);
+            btnForceStop.setEnabled(false);
         }
 
         // Favorites Star
@@ -248,25 +282,21 @@ public class GuestsView {
         boolean isPdm = com.homelabpocket.ui.UiPresentationPolicy.isPdm(serverConfig);
         TextView tvPdmNotice = card.findViewById(R.id.tv_guest_pdm_notice);
 
-        if (isPdm) {
-            btnStart.setVisibility(View.GONE);
-            btnShutdown.setVisibility(View.GONE);
-            btnReboot.setVisibility(View.GONE);
-            btnForceStop.setVisibility(View.GONE);
-            btnConsole.setVisibility(View.GONE);
-            if (tvPdmNotice != null) {
-                tvPdmNotice.setVisibility(View.VISIBLE);
-            }
-        } else {
-            if (tvPdmNotice != null) {
-                tvPdmNotice.setVisibility(View.GONE);
-            }
-            // Power Actions with double-submit prevention and task polling
-            btnStart.setOnClickListener(v -> executePowerAction(g, "start"));
-            btnShutdown.setOnClickListener(v -> executePowerAction(g, "shutdown"));
-            btnReboot.setOnClickListener(v -> executePowerAction(g, "reboot"));
-            btnForceStop.setOnClickListener(v -> confirmForceStop(g));
+        if (tvPdmNotice != null) {
+            tvPdmNotice.setVisibility(View.GONE);
+        }
 
+        btnStart.setOnClickListener(v -> confirmPowerAction(g, "start", isPdm));
+        btnShutdown.setOnClickListener(v -> confirmPowerAction(g, "shutdown", isPdm));
+        btnReboot.setOnClickListener(v -> confirmPowerAction(g, "reboot", isPdm));
+        btnForceStop.setOnClickListener(v -> confirmForceStop(g, isPdm));
+
+        if (isPdm || (!isRunning && !isStopped)) {
+            btnConsole.setVisibility(View.GONE);
+            btnConsole.setEnabled(false);
+        } else {
+            btnConsole.setVisibility(View.VISIBLE);
+            btnConsole.setEnabled(true);
             // Console / Terminal Action
             if (g.type == GuestInfo.GuestType.LXC) {
                 btnConsole.setText("Shell >_");
@@ -295,37 +325,121 @@ public class GuestsView {
         });
     }
 
-    private void confirmForceStop(GuestInfo g) {
+    private void confirmPowerAction(GuestInfo g, String action, boolean isPdm) {
+        if (g == null || g.state == GuestInfo.RunState.UNKNOWN || !com.homelabpocket.ui.UiPresentationPolicy.isGuestTargetValid(g, g.node, g.vmid, g.type)) {
+            Toast.makeText(activity, "Action blocked: Target not verified, moved, or offline. Please refresh.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        if (HomelabApp.getInstance().getSessionManager().isLocked()) {
+            Toast.makeText(activity, "Action blocked: Session is locked. Please unlock in Settings first.", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        String remote = PdmApiDriver.extractRemote(g.node);
+        String node = PdmApiDriver.extractNode(g.node);
         ServerConfig srv = HomelabApp.getInstance().getServerConfigStore().findById(g.serverId);
         String serverName = srv != null ? srv.name : g.serverId;
+        String guestTypeName = (g.type == GuestInfo.GuestType.LXC) ? "LXC Container" : "QEMU Virtual Machine";
 
-        View dialogView = LayoutInflater.from(activity).inflate(R.layout.dialog_confirm_stop, null);
-        TextView tvMsg = dialogView.findViewById(R.id.tv_dialog_message);
-        Button btnCancel = dialogView.findViewById(R.id.btn_dialog_cancel);
-        Button btnConfirm = dialogView.findViewById(R.id.btn_dialog_confirm);
+        // Reboot on PDM: Upstream API limitation honest disclosure
+        if (isPdm && "reboot".equalsIgnoreCase(action)) {
+            new AlertDialog.Builder(activity)
+                    .setTitle("Reboot Not Supported by PDM")
+                    .setMessage("Guest Reboot is not supported by the Proxmox Datacenter Manager API.\n\n"
+                            + "Upstream PDM supports Start, Graceful Shutdown, and Stop operations only.\n\n"
+                            + "To restart this guest, please perform a Graceful Shutdown followed by Start.\n\n"
+                            + "Target Identity:\n"
+                            + "• Server: " + serverName + "\n"
+                            + "• Remote: " + (remote.isEmpty() ? "N/A" : remote) + "\n"
+                            + "• Node: " + node + "\n"
+                            + "• Type: " + guestTypeName + "\n"
+                            + "• VMID: " + g.vmid + "\n"
+                            + "• Name: " + g.name)
+                    .setPositiveButton("OK", null)
+                    .show();
+            return;
+        }
 
-        String detailMsg = "WARNING: Force stop immediately cuts power to the guest (equivalent to pulling the physical power cord). Unsaved data in the guest may be corrupted.\n\n"
-                + "Target Identity:\n"
-                + "• Server: " + serverName + "\n"
-                + "• Host Node: " + g.node + "\n"
-                + "• Guest Type: " + g.type.name() + "\n"
-                + "• VMID: " + g.vmid + " (" + g.name + ")\n\n"
-                + "Are you sure you want to proceed?";
+        String actionTitle = "start".equalsIgnoreCase(action) ? "Confirm Start"
+                : "reboot".equalsIgnoreCase(action) ? "Confirm Reboot" : "Confirm Graceful Shutdown";
+        String actionVerb = "start".equalsIgnoreCase(action) ? "Start"
+                : "reboot".equalsIgnoreCase(action) ? "Reboot" : "Shutdown";
 
-        tvMsg.setText(detailMsg);
+        StringBuilder msg = new StringBuilder();
+        msg.append("Are you sure you want to ").append(actionVerb.toLowerCase()).append(" this guest?\n\n");
+        msg.append("Target Identity:\n");
+        msg.append("• Server: ").append(serverName).append("\n");
+        if (isPdm && !remote.isEmpty()) {
+            msg.append("• Remote: ").append(remote).append("\n");
+        }
+        msg.append("• Node: ").append(node).append("\n");
+        msg.append("• Type: ").append(guestTypeName).append("\n");
+        msg.append("• VMID: ").append(g.vmid).append("\n");
+        msg.append("• Name: ").append(g.name);
 
-        AlertDialog dialog = new AlertDialog.Builder(activity)
-                .setView(dialogView)
-                .setCancelable(true)
-                .create();
+        new AlertDialog.Builder(activity)
+                .setTitle(actionTitle)
+                .setMessage(msg.toString())
+                .setPositiveButton(actionVerb, (dialog, which) -> executePowerAction(g, action))
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
 
-        btnCancel.setOnClickListener(v -> dialog.dismiss());
-        btnConfirm.setOnClickListener(v -> {
-            dialog.dismiss();
-            executePowerAction(g, "stop");
-        });
+    private void confirmForceStop(GuestInfo g, boolean isPdm) {
+        if (g == null || g.state == GuestInfo.RunState.UNKNOWN || !com.homelabpocket.ui.UiPresentationPolicy.isGuestTargetValid(g, g.node, g.vmid, g.type)) {
+            Toast.makeText(activity, "Action blocked: Target not verified, moved, or offline. Please refresh.", Toast.LENGTH_SHORT).show();
+            return;
+        }
 
-        dialog.show();
+        if (HomelabApp.getInstance().getSessionManager().isLocked()) {
+            Toast.makeText(activity, "Action blocked: Session is locked. Please unlock in Settings first.", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        String remote = PdmApiDriver.extractRemote(g.node);
+        String node = PdmApiDriver.extractNode(g.node);
+        ServerConfig srv = HomelabApp.getInstance().getServerConfigStore().findById(g.serverId);
+        String serverName = srv != null ? srv.name : g.serverId;
+        String guestTypeName = (g.type == GuestInfo.GuestType.LXC) ? "LXC Container" : "QEMU Virtual Machine";
+
+        // Step 1: Warning dialog
+        StringBuilder warnMsg = new StringBuilder();
+        warnMsg.append("WARNING: Force Stop will immediately terminate the virtual machine/container without shutting down the OS cleanly.\n\n");
+        warnMsg.append("This may cause DATA LOSS, uncommitted disk cache corruption, or filesystem damage.\n\n");
+        warnMsg.append("Target Identity:\n");
+        warnMsg.append("• Server: ").append(serverName).append("\n");
+        if (isPdm && !remote.isEmpty()) {
+            warnMsg.append("• Remote: ").append(remote).append("\n");
+        }
+        warnMsg.append("• Node: ").append(node).append("\n");
+        warnMsg.append("• Type: ").append(guestTypeName).append("\n");
+        warnMsg.append("• VMID: ").append(g.vmid).append("\n");
+        warnMsg.append("• Name: ").append(g.name).append("\n\n");
+        warnMsg.append("Do you want to proceed to the second confirmation?");
+
+        new AlertDialog.Builder(activity)
+                .setTitle("Warning: Force Stop")
+                .setMessage(warnMsg.toString())
+                .setPositiveButton("Proceed...", (dialog, which) -> {
+                    // Step 2: Separate second confirmation
+                    showSecondForceStopConfirmation(g, isPdm, remote, node, serverName, guestTypeName);
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void showSecondForceStopConfirmation(GuestInfo g, boolean isPdm, String remote, String node, String serverName, String guestTypeName) {
+        new AlertDialog.Builder(activity)
+                .setTitle("Second Confirmation: Force Stop")
+                .setMessage("Are you ABSOLUTELY SURE you want to force stop " + guestTypeName + " " + g.vmid + " (" + g.name + ")?\n\n"
+                        + "This immediate power-kill action cannot be undone.\n\n"
+                        + (isPdm && !remote.isEmpty() ? ("• Remote: " + remote + "\n") : "")
+                        + "• Node: " + node + "\n"
+                        + "• Server: " + serverName)
+                .setPositiveButton("Force Stop (Kill)", (dialog, which) -> executePowerAction(g, "stop"))
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     private void showQemuConsoleDisclosure(GuestInfo g) {
@@ -374,43 +488,57 @@ public class GuestsView {
     }
 
     private void executePowerAction(GuestInfo g, String action) {
+        if (g == null || g.vmid <= 0 || g.node == null || g.node.trim().isEmpty() || g.type == null) {
+            Toast.makeText(activity, "Action blocked: Invalid guest target.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        if (!com.homelabpocket.ui.UiPresentationPolicy.isGuestTargetValid(g, g.node, g.vmid, g.type)) {
+            Toast.makeText(activity, "Action blocked: Target not verified, moved, or offline. Please refresh.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
         // Enforce session lock before action
         if (HomelabApp.getInstance().getSessionManager().isLocked()) {
             Toast.makeText(activity, "Action blocked: Session is locked. Please unlock in Settings first.", Toast.LENGTH_LONG).show();
             return;
         }
 
-        // PDM misrouting prevention
         ServerConfig cfg = HomelabApp.getInstance().getServerConfigStore().findById(g.serverId);
-        if (cfg != null && cfg.type == ServerConfig.ServerType.PDM) {
-            Toast.makeText(activity, "Guest power actions are disabled on PDM connections to prevent misrouting. Connect directly to the host's standalone PVE endpoint.", Toast.LENGTH_LONG).show();
-            return;
-        }
-
-        String actionKey = com.homelabpocket.api.ActionGuard.buildGuestKey(g.serverId, g.node, g.type.name(), g.vmid, action);
+        String actionKey = com.homelabpocket.api.ActionGuard.buildGuestResourceKey(g.serverId, g.node, g.type.name(), g.vmid);
 
         // Double-submit prevention via production ActionGuard
-        if (!com.homelabpocket.api.ActionGuard.getInstance().tryAcquire(actionKey)) {
+        com.homelabpocket.api.ActionGuard.Lease lease = com.homelabpocket.api.ActionGuard.getInstance().acquireLease(actionKey);
+        if (lease == null) {
             Toast.makeText(activity, R.string.double_submit_blocked, Toast.LENGTH_SHORT).show();
             return;
         }
 
-        new PowerActionTask(g, cfg, action, actionKey).execute();
+        com.homelabpocket.api.ActionGuard.TaskLifecycleOwner lifecycleOwner = new com.homelabpocket.api.ActionGuard.TaskLifecycleOwner(lease);
+
+        currentPowerTask = new PowerActionTask(g, cfg, action, lifecycleOwner);
+        currentPowerTask.execute();
     }
 
     private class PowerActionTask extends AsyncTask<Void, TaskResult, TaskResult> {
         private final GuestInfo guest;
         private final ServerConfig server;
         private final String action;
-        private final String actionKey;
+        private final com.homelabpocket.api.ActionGuard.TaskLifecycleOwner lifecycleOwner;
         private ProgressDialog progressDialog;
         private String errorMessage;
 
-        PowerActionTask(GuestInfo guest, ServerConfig server, String action, String actionKey) {
+        PowerActionTask(GuestInfo guest, ServerConfig server, String action, com.homelabpocket.api.ActionGuard.TaskLifecycleOwner lifecycleOwner) {
             this.guest = guest;
             this.server = server;
             this.action = action;
-            this.actionKey = actionKey;
+            this.lifecycleOwner = lifecycleOwner;
+        }
+
+        void releaseGuardOnce() {
+            if (lifecycleOwner != null) {
+                lifecycleOwner.release();
+            }
         }
 
         @Override
@@ -423,7 +551,12 @@ public class GuestsView {
                     + "Host: " + guest.node + " | Server: " + serverName + "\n"
                     + "Status: Dispatching request…");
             progressDialog.setCancelable(true);
-            progressDialog.setOnCancelListener(dialog -> cancel(true));
+            progressDialog.setOnCancelListener(dialog -> {
+                cancel(true);
+                if (lifecycleOwner != null) {
+                    lifecycleOwner.requestCancel();
+                }
+            });
             progressDialog.show();
         }
 
@@ -431,53 +564,208 @@ public class GuestsView {
         protected TaskResult doInBackground(Void... voids) {
             HomelabApp app = HomelabApp.getInstance();
             try {
+                if (lifecycleOwner != null) {
+                    lifecycleOwner.markStarted();
+                }
+
+                long totalBudgetMs = 60_000L;
+                long startNanos = System.nanoTime();
+                long deadlineNanos = startNanos + totalBudgetMs * 1_000_000L;
+
+                if (isCancelled() || (lifecycleOwner != null && lifecycleOwner.isCancelled())) {
+                    releaseGuardOnce();
+                    return null;
+                }
+
                 if (server == null) {
                     errorMessage = "Server configuration not found.";
-                    com.homelabpocket.api.ActionGuard.getInstance().release(actionKey);
+                    releaseGuardOnce();
                     return null;
                 }
-                if (server.type == ServerConfig.ServerType.PDM) {
-                    errorMessage = "Guest power actions via PDM are disabled in this release to prevent endpoint misrouting. Connect directly to the host's standalone PVE endpoint.";
-                    com.homelabpocket.api.ActionGuard.getInstance().release(actionKey);
+
+                if (deadlineNanos - System.nanoTime() <= 0) {
+                    errorMessage = "Operation budget exhausted before credential acquisition.";
+                    releaseGuardOnce();
                     return null;
                 }
-                AuthCredentials creds = app.getSessionManager().getCredentials(server);
+
+                AuthCredentials creds = app.getSessionManager().getCredentialsWithDeadline(server, deadlineNanos);
                 if (creds == null) {
                     errorMessage = app.getSessionManager().isLocked() ?
                             "Session is locked. Please unlock in Settings." :
                             "Authentication failed: no valid credentials.";
-                    com.homelabpocket.api.ActionGuard.getInstance().release(actionKey);
+                    releaseGuardOnce();
                     return null;
                 }
 
+                if (isCancelled() || (lifecycleOwner != null && lifecycleOwner.isCancelled()) || System.nanoTime() >= deadlineNanos) {
+                    releaseGuardOnce();
+                    return null;
+                }
+
+                // Fresh target resolution before POST under the same absolute action budget
+                if (deadlineNanos - System.nanoTime() <= 0) {
+                    errorMessage = "Operation budget exhausted before target resolution.";
+                    releaseGuardOnce();
+                    return null;
+                }
+                GuestInfo freshTarget = null;
+                if (server.type == ServerConfig.ServerType.PDM) {
+                    PdmApiDriver pdmResolve = new PdmApiDriver(server, app.getSessionManager());
+                    freshTarget = pdmResolve.fetchGuestDetailWithDeadline(guest.node, guest.vmid, guest.type, creds, deadlineNanos);
+                } else {
+                    PveApiDriver pveResolve = new PveApiDriver(server);
+                    List<GuestInfo> guests = pveResolve.fetchAllGuestsWithDeadline(guest.node, creds, deadlineNanos);
+                    for (GuestInfo g : guests) {
+                        if (g.vmid == guest.vmid && g.type == guest.type && guest.node.equals(g.node)) {
+                            freshTarget = g;
+                            break;
+                        }
+                    }
+                }
+
+                // Strict validation on freshly resolved target: reject removed, moved, offline, or unknown target without POST
+                if (freshTarget == null) {
+                    errorMessage = "Target verification failed: guest [" + guest.vmid + "] removed or moved from host " + guest.node + ". No operation dispatched.";
+                    releaseGuardOnce();
+                    return null;
+                }
+                if (!com.homelabpocket.ui.UiPresentationPolicy.isGuestTargetValid(freshTarget, guest.node, guest.vmid, guest.type)) {
+                    errorMessage = "Target verification failed: guest moved, offline, or invalid target parameters. No operation dispatched.";
+                    releaseGuardOnce();
+                    return null;
+                }
+                if (freshTarget.state == null || freshTarget.state == GuestInfo.RunState.UNKNOWN) {
+                    errorMessage = "Target verification failed: guest state is unknown or offline. No operation dispatched.";
+                    releaseGuardOnce();
+                    return null;
+                }
+                if ("start".equals(action) && freshTarget.state == GuestInfo.RunState.RUNNING) {
+                    errorMessage = "Target already running: guest [" + guest.vmid + "] is currently active on " + guest.node + ". No operation dispatched.";
+                    releaseGuardOnce();
+                    return null;
+                }
+                if (("shutdown".equals(action) || "stop".equals(action)) && freshTarget.state == GuestInfo.RunState.STOPPED) {
+                    errorMessage = "Target already stopped: guest [" + guest.vmid + "] is currently stopped on " + guest.node + ". No operation dispatched.";
+                    releaseGuardOnce();
+                    return null;
+                }
+
+                if (isCancelled() || (lifecycleOwner != null && lifecycleOwner.isCancelled())) {
+                    releaseGuardOnce();
+                    return null;
+                }
+
+                if (server.type == ServerConfig.ServerType.PDM) {
+                    PdmApiDriver pdm = new PdmApiDriver(server, app.getSessionManager());
+                    if (deadlineNanos - System.nanoTime() <= 0) {
+                        errorMessage = "Operation budget exhausted before request dispatch.";
+                        releaseGuardOnce();
+                        return null;
+                    }
+
+                    String upid;
+                    switch (action) {
+                        case "start":
+                            upid = pdm.startGuestWithDeadline(guest.node, guest.vmid, guest.type, creds, deadlineNanos);
+                            break;
+                        case "shutdown":
+                            upid = pdm.shutdownGuestWithDeadline(guest.node, guest.vmid, guest.type, creds, deadlineNanos);
+                            break;
+                        case "stop":
+                            upid = pdm.forceStopGuestWithDeadline(guest.node, guest.vmid, guest.type, creds, deadlineNanos);
+                            break;
+                        case "reboot":
+                            releaseGuardOnce();
+                            errorMessage = "Guest Reboot is not supported by the Proxmox Datacenter Manager API. Please perform a Graceful Shutdown followed by Start.";
+                            return null;
+                        default:
+                            releaseGuardOnce();
+                            errorMessage = "Unknown action: " + action;
+                            return null;
+                    }
+
+                    if (isCancelled() || (lifecycleOwner != null && lifecycleOwner.isCancelled())) {
+                        releaseGuardOnce();
+                        return null;
+                    }
+
+                    long remainingBudgetMs = (deadlineNanos - System.nanoTime()) / 1_000_000L;
+                    if (remainingBudgetMs <= 0) {
+                        errorMessage = "Operation budget exhausted before task polling.";
+                        releaseGuardOnce();
+                        return new TaskResult(upid, TaskResult.TaskState.TIMEOUT, "Operation budget exhausted before task polling", null, 0, 0, guest.node);
+                    }
+
+                    // Shared bounded polling owner preserves action guard until finished
+                    return com.homelabpocket.api.TaskPoller.getInstance().pollUntilFinished(
+                            lifecycleOwner,
+                            guest.node,
+                            upid,
+                            creds,
+                            (nodeName, taskId, auth, curBudget) -> pdm.pollTaskWithDeadline(nodeName, taskId, auth, deadlineNanos),
+                            new com.homelabpocket.api.TaskPoller.PollingCallback() {
+                                @Override
+                                public void onProgress(TaskResult progress) {
+                                    publishProgress(progress);
+                                }
+
+                                @Override
+                                public boolean isCancelled() {
+                                    return PowerActionTask.this.isCancelled() || (lifecycleOwner != null && lifecycleOwner.isCancelled());
+                                }
+                            },
+                            remainingBudgetMs,
+                            1500L
+                    );
+                }
+
                 PveApiDriver pve = new PveApiDriver(server);
+                if (deadlineNanos - System.nanoTime() <= 0) {
+                    errorMessage = "Operation budget exhausted before request dispatch.";
+                    releaseGuardOnce();
+                    return null;
+                }
+
                 String upid;
                 switch (action) {
                     case "start":
-                        upid = pve.startGuest(guest.node, guest.vmid, guest.type, creds);
+                        upid = pve.startGuestWithDeadline(guest.node, guest.vmid, guest.type, creds, deadlineNanos);
                         break;
                     case "shutdown":
-                        upid = pve.shutdownGuest(guest.node, guest.vmid, guest.type, creds);
+                        upid = pve.shutdownGuestWithDeadline(guest.node, guest.vmid, guest.type, creds, deadlineNanos);
                         break;
                     case "reboot":
-                        upid = pve.rebootGuest(guest.node, guest.vmid, guest.type, creds);
+                        upid = pve.rebootGuestWithDeadline(guest.node, guest.vmid, guest.type, creds, deadlineNanos);
                         break;
                     case "stop":
-                        upid = pve.forceStopGuest(guest.node, guest.vmid, guest.type, creds);
+                        upid = pve.stopGuestWithDeadline(guest.node, guest.vmid, guest.type, creds, deadlineNanos);
                         break;
                     default:
                         errorMessage = "Unknown action: " + action;
-                        com.homelabpocket.api.ActionGuard.getInstance().release(actionKey);
+                        releaseGuardOnce();
                         return null;
+                }
+
+                if (isCancelled() || (lifecycleOwner != null && lifecycleOwner.isCancelled())) {
+                    releaseGuardOnce();
+                    return null;
+                }
+
+                long remainingBudgetMs = (deadlineNanos - System.nanoTime()) / 1_000_000L;
+                if (remainingBudgetMs <= 0) {
+                    errorMessage = "Operation budget exhausted before task polling.";
+                    releaseGuardOnce();
+                    return new TaskResult(upid, TaskResult.TaskState.TIMEOUT, "Operation budget exhausted before task polling", null, 0, 0, guest.node);
                 }
 
                 // Shared bounded polling owner preserves action guard until finished
                 return com.homelabpocket.api.TaskPoller.getInstance().pollUntilFinished(
-                        actionKey,
+                        lifecycleOwner,
                         guest.node,
                         upid,
                         creds,
-                        (nodeName, taskId, auth, budgetMs) -> pve.pollTask(nodeName, taskId, auth, budgetMs),
+                        (nodeName, taskId, auth, budgetMs) -> pve.pollTaskWithDeadline(nodeName, taskId, auth, deadlineNanos),
                         new com.homelabpocket.api.TaskPoller.PollingCallback() {
                             @Override
                             public void onProgress(TaskResult progress) {
@@ -486,21 +774,23 @@ public class GuestsView {
 
                             @Override
                             public boolean isCancelled() {
-                                return PowerActionTask.this.isCancelled();
+                                return PowerActionTask.this.isCancelled() || (lifecycleOwner != null && lifecycleOwner.isCancelled());
                             }
                         },
-                        60_000L,
+                        remainingBudgetMs,
                         1500L
                 );
 
             } catch (ApiException e) {
-                com.homelabpocket.api.ActionGuard.getInstance().release(actionKey);
+                releaseGuardOnce();
                 errorMessage = e.getUserMessage();
                 return null;
             } catch (Exception e) {
-                com.homelabpocket.api.ActionGuard.getInstance().release(actionKey);
+                releaseGuardOnce();
                 errorMessage = e.getMessage();
                 return null;
+            } finally {
+                releaseGuardOnce();
             }
         }
 
@@ -518,6 +808,7 @@ public class GuestsView {
 
         @Override
         protected void onPostExecute(TaskResult result) {
+            releaseGuardOnce();
             if (progressDialog != null && progressDialog.isShowing()) {
                 progressDialog.dismiss();
             }
@@ -572,11 +863,20 @@ public class GuestsView {
 
         @Override
         protected void onCancelled(TaskResult result) {
-            if (progressDialog != null && progressDialog.isShowing()) {
-                progressDialog.dismiss();
-            }
-            Toast.makeText(activity, "Operation cancelled: " + action + " on " + guest.name, Toast.LENGTH_SHORT).show();
-            activity.refreshData();
+            releaseGuardOnce();
+            try {
+                if (progressDialog != null && progressDialog.isShowing()) {
+                    progressDialog.dismiss();
+                }
+                Toast.makeText(activity, "Operation cancelled: " + action + " on " + (guest != null ? guest.name : ""), Toast.LENGTH_SHORT).show();
+                activity.refreshData();
+            } catch (Throwable ignored) {}
+        }
+
+        @Override
+        protected void onCancelled() {
+            releaseGuardOnce();
+            onCancelled(null);
         }
     }
 }

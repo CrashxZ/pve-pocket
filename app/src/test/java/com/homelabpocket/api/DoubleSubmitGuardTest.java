@@ -139,4 +139,26 @@ public class DoubleSubmitGuardTest {
         assertFalse(guard.isRunning("key2"));
         assertFalse(guard.isRunning("key3"));
     }
+
+    @Test
+    public void testActionGuardTupleCollisionProofServerAndNode() {
+        // Distinct server/node combinations with colons must not collide
+        assertTrue(guard.tryAcquireGuestAction("a:b", "c", "qemu", 101, "start"));
+        assertTrue("Server 'a:b'/Node 'c' must not collide with Server 'a'/Node 'b:c'",
+                guard.tryAcquireGuestAction("a", "b:c", "qemu", 101, "start"));
+
+        // Different servers with colons/slashes
+        assertTrue(guard.tryAcquireGuestAction("srv-1", "node:1", "qemu", 200, "start"));
+        assertTrue(guard.tryAcquireGuestAction("srv-1:node", "1", "qemu", 200, "start"));
+
+        // Resource lock: same guest with conflicting actions must block
+        assertTrue(guard.tryAcquireGuestAction("server/east", "node-alpha", "qemu", 300, "shutdown"));
+        assertFalse("Force stop on same guest must be blocked while shutdown is running",
+                guard.tryAcquireGuestAction("server/east", "node-alpha", "qemu", 300, "stop"));
+
+        // Opaque case preservation for server and node IDs
+        assertTrue(guard.tryAcquireGuestAction("ServerCaseA", "NodeCaseB", "qemu", 400, "start"));
+        assertTrue("Distinct case in server identity must be preserved without collision",
+                guard.tryAcquireGuestAction("servercasea", "nodecaseb", "qemu", 400, "start"));
+    }
 }

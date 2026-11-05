@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.3-alpha] - 2026-11-05
+
+### Added
+- **Proxmox Datacenter Manager (PDM) Guest Power Actions**:
+  - Implemented guest power management for QEMU virtual machines and LXC containers via upstream PDM REST endpoints: Start, Graceful Shutdown, and Force Stop.
+  - Interactive confirmation dialogs before dispatching power mutations, distinguishing graceful shutdown from forceful termination.
+  - Concurrency and mutation protection: `ActionGuard` prevents overlapping power operations on the same guest during client tracking; non-retrying POST execution (`executePostWithoutRetryWithDeadline`) prevents duplicate mutation dispatch.
+  - Asynchronous task tracking: Exact guest/node verification before dispatch, followed by remote-bound UPID task polling.
+  - Upstream Reboot Disclosure: Honest disclosure that upstream PDM API provides no reboot endpoint; unsupported action rejected cleanly without attempting unsafe synthetic reboots.
+- **Storage Backend Status Enrichment**:
+  - Node storage pools enriched with backend types (`dir`, `lvm`, `lvmthin`, `zfspool`, `nfs`) by querying upstream `/pve/remotes/{remote}/nodes/{node}/storage/{storage}/status`.
+  - In-memory bounded LRU cache with positive and negative TTL caching to minimize redundant network requests.
+  - Graceful fallback: returns explicit `Unavailable` or `?` when permissions (HTTP 403), older PDM versions, or missing endpoints occur.
+- **Safety and Reliability Fixes**:
+  - API Token 401 Lock Deadline: Added bounded acquisition deadline in `SessionManager` during token 401 handling, preventing thread lock contention stalls.
+  - UI State Safety: Resilient handling of `UNKNOWN` guest and host runtime states without crashing or reporting synthetic zeros.
+  - Full consolidation of prior v0.1.2 UI enhancements (radial CPU/RAM fleet gauges, compact hosts list, scannable labels) and v0.1.1 PDM HttpOnly cookie authentication fix.
+
+### Changed
+- Updated `versionName` to `0.1.3-alpha` and `versionCode` to `6`.
+- Release asset filename: `pve-pocket-v0.1.3-alpha.apk`.
+- Updated repository screenshots with four real user captures showing phone UI layout, live inventory, guest power controls, and storage pools.
+
+### Verification
+- Full test suite passed: **254 automated behavioral tests passed** (100% pass rate).
+- Test suite incorporates 8 frozen acceptance probes overlapping the main test suite (not 8 additional unique tests).
+- Token 401 deadline fixture verified: returns in bounded 40ms vs previously stalled 361ms under lock contention.
+- Release APK verified: exact size **175085 bytes**, SHA-256 `077e5ca653392c73ebf6b3f82540a78d0e69df30ba2ac218447c87a6cf6ae234`.
+- Verified APK Signature Scheme v2 and v3 using certificate SHA-256 `869037568e2aabf3b1030d21fc08ed331d4732f3387929504d1b2e3b38ebae5e`, matching prior releases for upgrade compatibility (`com.homelabpocket`, min API 26, target API 29).
+- Debug alpha release: does not claim production signing, physical device lifecycle/Keystore qualification, or live hypervisor power execution. Screenshots confirm phone UI rendering and live inventory.
+- CI status: The release workflow verifies this commit on Ubuntu/JDK 17 before APK publication; see the repository Actions tab for its result.
+
 ## [0.1.2-alpha] - 2026-11-05
 
 ### Changed

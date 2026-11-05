@@ -98,6 +98,14 @@ public class MainActivity extends Activity {
         }
     }
 
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (guestsView != null) {
+            guestsView.cancelActiveTasks();
+        }
+    }
+
     private void setupNavigation() {
         btnNavDashboard.setOnClickListener(v -> selectTab(0));
         btnNavNodes.setOnClickListener(v -> selectTab(1));

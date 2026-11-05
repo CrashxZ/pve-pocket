@@ -835,4 +835,61 @@ public class PdmUpstreamAuthRegressionTest {
             assertEquals("Redirect sink must not receive forwarded requests", 0, sinkRequestCount.get());
         }
     }
+
+    @Test
+    public void testPveApiDriverApiToken401PropagatesDeadlineAwareSessionInvalidation() throws Exception {
+        ServerConfig cfg = new ServerConfig("test-pve", "PVE Test", "127.0.0.1", 8006,
+                ServerConfig.ServerType.PVE, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        com.homelabpocket.security.CredentialStore store = new com.homelabpocket.security.CredentialStore(
+                new android.content.Context() {
+                    public android.content.SharedPreferences getSharedPreferences(String n, int m) {
+                        return null;
+                    }
+                });
+        SessionManager sm = new SessionManager(store);
+        PveApiDriver driver = new PveApiDriver(cfg, sm);
+
+        Class<?> actionClass = Class.forName("com.homelabpocket.api.PveApiDriver$RequestActionWithDeadline");
+        java.util.concurrent.locks.ReentrantLock lock = sm.getSessionLockForTesting();
+        java.util.concurrent.CountDownLatch held = new java.util.concurrent.CountDownLatch(1);
+
+        Object fake = java.lang.reflect.Proxy.newProxyInstance(actionClass.getClassLoader(), new Class<?>[]{actionClass}, (o, m, a) -> {
+            Thread holder = new Thread(() -> {
+                lock.lock();
+                try {
+                    held.countDown();
+                    Thread.sleep(300);
+                } catch (Exception ignored) {
+                } finally {
+                    lock.unlock();
+                }
+            });
+            holder.start();
+            held.await();
+            throw new ApiException(401, "synthetic token 401");
+        });
+
+        java.lang.reflect.Method call = PveApiDriver.class.getDeclaredMethod(
+                "executeWithAuthRetryWithDeadline", AuthCredentials.class, long.class, actionClass);
+        call.setAccessible(true);
+
+        long start = System.nanoTime();
+        long deadlineNanos = start + 50_000_000L; // 50ms deadline
+        try {
+            call.invoke(driver, AuthCredentials.apiToken("PVEAPIToken=root@pam!token=synthetic"), deadlineNanos, fake);
+            fail("Expected ApiException on token 401 with lock contention");
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            Throwable cause = e.getCause();
+            assertTrue("Expected ApiException cause", cause instanceof ApiException);
+            ApiException apiEx = (ApiException) cause;
+            assertTrue("Expected lock acquisition timeout or deadline exception, got: " + apiEx.getMessage(),
+                    apiEx.getMessage().contains("SessionManager lock acquisition timed out") ||
+                    apiEx.getMessage().contains("deadline") ||
+                    apiEx.getMessage().contains("expired"));
+        }
+
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+        assertTrue("Elapsed time (" + elapsedMs + "ms) must be bounded by deadline (~50ms) and not block for 300ms",
+                elapsedMs < 200L);
+    }
 }

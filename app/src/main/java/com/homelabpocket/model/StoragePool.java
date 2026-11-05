@@ -56,12 +56,17 @@ public class StoragePool {
     }
 
     public boolean isTypeReported() {
-        return type != null && !type.trim().isEmpty() && !"unknown".equalsIgnoreCase(type.trim());
+        return type != null && !type.trim().isEmpty() && !"unknown".equalsIgnoreCase(type.trim())
+                && !type.startsWith("Type unavailable");
     }
 
     public String getTypeBadge() {
         StringBuilder sb = new StringBuilder();
-        sb.append(type.toUpperCase());
+        if (type != null && type.startsWith("Type unavailable")) {
+            sb.append("UNKNOWN");
+        } else {
+            sb.append(type.toUpperCase());
+        }
         if (shared) {
             sb.append(" (SHARED)");
         }

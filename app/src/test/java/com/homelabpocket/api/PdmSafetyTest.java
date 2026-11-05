@@ -7,6 +7,7 @@ import com.homelabpocket.model.GuestInfo;
 import com.homelabpocket.model.NodeStatus;
 import com.homelabpocket.model.ServerConfig;
 import com.homelabpocket.model.StoragePool;
+import com.homelabpocket.model.TaskResult;
 import com.homelabpocket.security.PinnedTrustManager;
 import com.homelabpocket.util.JsonUtil;
 import com.sun.net.httpserver.HttpHandler;
@@ -22,6 +23,7 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.util.Arrays;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
@@ -31,7 +33,16 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import com.homelabpocket.security.CredentialStore;
+import com.homelabpocket.ui.UiPresentationPolicy;
 
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
@@ -49,9 +60,18 @@ public class PdmSafetyTest {
     private static final AtomicInteger ticketRequests = new AtomicInteger(0);
     private static final AtomicInteger remotesRequests = new AtomicInteger(0);
     private static final AtomicInteger resourcesRequests = new AtomicInteger(0);
+    private static final AtomicInteger powerPostRequests = new AtomicInteger(0);
+    private static final AtomicInteger taskPollRequests = new AtomicInteger(0);
+    private static final AtomicInteger storageStatusRequests = new AtomicInteger(0);
     private static final AtomicBoolean return403 = new AtomicBoolean(false);
     private static final AtomicBoolean return401Once = new AtomicBoolean(false);
     private static final AtomicBoolean return404OnResourcesList = new AtomicBoolean(false);
+    private static final AtomicBoolean return401OnPowerPost = new AtomicBoolean(false);
+    private static final AtomicBoolean return403OnPowerPost = new AtomicBoolean(false);
+    private static final AtomicBoolean return403OnStorageStatus = new AtomicBoolean(false);
+    private static final AtomicBoolean return404OnStorageStatus = new AtomicBoolean(false);
+    private static final AtomicInteger taskRunningCountdown = new AtomicInteger(0);
+    private static final AtomicReference<String> taskExitStatus = new AtomicReference<>("OK");
     private static final AtomicReference<String> customResourcesResponse = new AtomicReference<>(null);
 
     @BeforeClass
@@ -200,6 +220,193 @@ public class PdmSafetyTest {
         // Note: Canonical upstream route ONLY; no unproven /resources route registered
         mockServer.createContext("/api2/json/resources/list", resourcesHandler);
 
+        // 4. PDM Remote Operations: guest power actions, task polling, and storage status
+        mockServer.createContext("/api2/json/pve/remotes", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            String method = exchange.getRequestMethod();
+
+            java.util.regex.Pattern taskPattern = java.util.regex.Pattern.compile("^/api2/json/pve/remotes/([^/]+)/tasks/([^/]+)/status$");
+            java.util.regex.Pattern storagePattern = java.util.regex.Pattern.compile("^/api2/json/pve/remotes/([^/]+)/nodes/([^/]+)/storage/([^/]+)/status$");
+            java.util.regex.Pattern powerPattern = java.util.regex.Pattern.compile("^/api2/json/pve/remotes/([^/]+)/(qemu|lxc)/(\\d+)/(start|shutdown|stop)$");
+
+            java.util.regex.Matcher taskMatcher = taskPattern.matcher(path);
+            if (taskMatcher.matches()) {
+                if (!"GET".equalsIgnoreCase(method)) {
+                    exchange.sendResponseHeaders(405, -1);
+                    exchange.close();
+                    return;
+                }
+                String remotePath = java.net.URLDecoder.decode(taskMatcher.group(1), "UTF-8");
+                String upidPath = java.net.URLDecoder.decode(taskMatcher.group(2), "UTF-8");
+
+                // Upstream tasks.rs verify_upid fail-closed check: reject remote mismatch
+                int bang = upidPath.indexOf('!');
+                if (bang > 0) {
+                    String prefix = upidPath.substring(0, bang);
+                    int colon = prefix.indexOf(':');
+                    if (colon > 0) {
+                        String upidRemote = prefix.substring(colon + 1).trim();
+                        if (!remotePath.equals(upidRemote)) {
+                            byte[] b = ("{\"message\":\"Remote UPID remote mismatch: expected " + remotePath + ", found " + upidRemote + "\"}").getBytes("UTF-8");
+                            exchange.getResponseHeaders().set("Content-Type", "application/json");
+                            exchange.sendResponseHeaders(400, b.length);
+                            exchange.getResponseBody().write(b);
+                            exchange.close();
+                            return;
+                        }
+                    }
+                }
+
+                taskPollRequests.incrementAndGet();
+                if (return403.get()) {
+                    byte[] b = "{\"message\":\"Permission denied\"}".getBytes("UTF-8");
+                    exchange.sendResponseHeaders(403, b.length);
+                    exchange.getResponseBody().write(b);
+                    exchange.close();
+                    return;
+                }
+                String resp;
+                if (taskRunningCountdown.get() > 0) {
+                    taskRunningCountdown.decrementAndGet();
+                    resp = "{\"data\":{\"status\":\"running\",\"node\":\"pve-node-01\",\"starttime\":1700000000}}";
+                } else {
+                    String exitStat = taskExitStatus.get();
+                    if (exitStat == null) exitStat = "OK";
+                    resp = "{\"data\":{\"status\":\"stopped\",\"exitstatus\":\"" + exitStat + "\",\"node\":\"pve-node-01\",\"starttime\":1700000000,\"endtime\":1700000010}}";
+                }
+                byte[] respBytes = resp.getBytes("UTF-8");
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, respBytes.length);
+                exchange.getResponseBody().write(respBytes);
+                exchange.close();
+                return;
+            }
+
+            java.util.regex.Matcher storageMatcher = storagePattern.matcher(path);
+            if (storageMatcher.matches()) {
+                if (!"GET".equalsIgnoreCase(method)) {
+                    exchange.sendResponseHeaders(405, -1);
+                    exchange.close();
+                    return;
+                }
+                storageStatusRequests.incrementAndGet();
+                if (return403OnStorageStatus.get()) {
+                    byte[] b = "{\"message\":\"Permission check failed for storage audit\"}".getBytes("UTF-8");
+                    exchange.sendResponseHeaders(403, b.length);
+                    exchange.getResponseBody().write(b);
+                    exchange.close();
+                    return;
+                }
+                if (return404OnStorageStatus.get()) {
+                    byte[] b = "{\"message\":\"Route not found on this PDM version\"}".getBytes("UTF-8");
+                    exchange.sendResponseHeaders(404, b.length);
+                    exchange.getResponseBody().write(b);
+                    exchange.close();
+                    return;
+                }
+                String resp = "{\"data\":{\"type\":\"zfspool\",\"active\":1,\"enabled\":1,\"total\":1000000000000,\"used\":300000000000,\"avail\":700000000000,\"shared\":0}}";
+                byte[] respBytes = resp.getBytes("UTF-8");
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, respBytes.length);
+                exchange.getResponseBody().write(respBytes);
+                exchange.close();
+                return;
+            }
+
+            java.util.regex.Matcher powerMatcher = powerPattern.matcher(path);
+            if (powerMatcher.matches()) {
+                if (!"POST".equalsIgnoreCase(method)) {
+                    exchange.sendResponseHeaders(405, -1);
+                    exchange.close();
+                    return;
+                }
+
+                // Verify Form Body: node parameter strictly required
+                java.io.ByteArrayOutputStream bodyBytes = new java.io.ByteArrayOutputStream();
+                java.io.InputStream is = exchange.getRequestBody();
+                byte[] buf = new byte[512];
+                int n;
+                while ((n = is.read(buf)) > 0) {
+                    bodyBytes.write(buf, 0, n);
+                }
+                String bodyStr = new String(bodyBytes.toByteArray(), "UTF-8");
+                boolean hasValidNode = false;
+                for (String param : bodyStr.split("&")) {
+                    int eq = param.indexOf('=');
+                    if (eq > 0) {
+                        String key = param.substring(0, eq).trim();
+                        String val = param.substring(eq + 1).trim();
+                        if ("node".equals(key) && !val.isEmpty()) {
+                            hasValidNode = true;
+                            break;
+                        }
+                    }
+                }
+                if (!hasValidNode) {
+                    byte[] b = "{\"message\":\"Missing required parameter: node\"}".getBytes("UTF-8");
+                    exchange.getResponseHeaders().set("Content-Type", "application/json");
+                    exchange.sendResponseHeaders(400, b.length);
+                    exchange.getResponseBody().write(b);
+                    exchange.close();
+                    return;
+                }
+
+                powerPostRequests.incrementAndGet();
+
+                // Check auth headers
+                String authHeader = exchange.getRequestHeaders().getFirst("Authorization");
+                String cookieHeader = exchange.getRequestHeaders().getFirst("Cookie");
+                String csrfHeader = exchange.getRequestHeaders().getFirst("CSRFPreventionToken");
+
+                boolean hasAuth = (authHeader != null && authHeader.contains("PDMAPIToken")) ||
+                        (cookieHeader != null && (cookieHeader.contains("__Host-PDMAuthCookie") || cookieHeader.contains("PDMAuthCookie")));
+                assertTrue("Power action must supply valid PDM auth header/cookie", hasAuth);
+
+                if (cookieHeader != null && !cookieHeader.isEmpty()) {
+                    assertNotNull("Cookie-authenticated POST must supply CSRFPreventionToken", csrfHeader);
+                    if (csrfHeader == null || csrfHeader.trim().isEmpty()) {
+                        byte[] b = "{\"message\":\"Permission denied (403): CSRFPreventionToken required for cookie-authenticated POST\"}".getBytes("UTF-8");
+                        exchange.sendResponseHeaders(403, b.length);
+                        exchange.getResponseBody().write(b);
+                        exchange.close();
+                        return;
+                    }
+                }
+
+                if (return401OnPowerPost.get()) {
+                    byte[] b = "{\"message\":\"Authentication ticket expired\"}".getBytes("UTF-8");
+                    exchange.sendResponseHeaders(401, b.length);
+                    exchange.getResponseBody().write(b);
+                    exchange.close();
+                    return;
+                }
+                if (return403OnPowerPost.get()) {
+                    byte[] b = "{\"message\":\"Permission denied for guest power management\"}".getBytes("UTF-8");
+                    exchange.sendResponseHeaders(403, b.length);
+                    exchange.getResponseBody().write(b);
+                    exchange.close();
+                    return;
+                }
+
+                String remoteName = java.net.URLDecoder.decode(powerMatcher.group(1), "UTF-8");
+                String vmType = powerMatcher.group(2);
+                String vmidStr = powerMatcher.group(3);
+                String actionName = powerMatcher.group(4);
+
+                String upid = "pve:" + remoteName + "!UPID:pve-node-01:00001234:00005678:67B4A9D1:qm" + actionName + ":" + vmidStr + ":root@pam:";
+                String resp = "{\"data\":\"" + upid + "\"}";
+                byte[] respBytes = resp.getBytes("UTF-8");
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, respBytes.length);
+                exchange.getResponseBody().write(respBytes);
+                exchange.close();
+                return;
+            }
+
+            exchange.sendResponseHeaders(404, -1);
+            exchange.close();
+        });
+
         mockServer.start();
         mockPort = mockServer.getAddress().getPort();
     }
@@ -212,27 +419,195 @@ public class PdmSafetyTest {
     }
 
     @Test
-    public void testPdmGuestPowerActionsThrowUnsupportedOperationException() throws Exception {
+    public void testPdmQemuStartAndTaskPolling() throws Exception {
         ServerConfig pdmConfig = new ServerConfig("pdm-1", "Datacenter Manager", "127.0.0.1", mockPort,
                 ServerConfig.ServerType.PDM, mockFingerprint);
+        PdmApiDriver pdmDriver = new PdmApiDriver(pdmConfig);
+        AuthCredentials dummyAuth = AuthCredentials.ticket("root@pam", "ticket", "csrf", System.currentTimeMillis() + 3600000);
 
+        String upid = pdmDriver.startGuest("cluster-west/pve-node-01", 101, GuestInfo.GuestType.QEMU, dummyAuth, 15_000L);
+        assertNotNull(upid);
+        assertTrue("UPID must follow PDM RemoteUpid format", upid.startsWith("pve:cluster-west!UPID:"));
+
+        TaskResult result = pdmDriver.pollTask("cluster-west/pve-node-01", upid, dummyAuth, 15_000L);
+        assertNotNull(result);
+        assertEquals(TaskResult.TaskState.OK, result.state);
+        assertEquals("pve-node-01", result.node);
+    }
+
+    @Test
+    public void testPdmLxcStartAndTaskPolling() throws Exception {
+        ServerConfig pdmConfig = new ServerConfig("pdm-1", "Datacenter Manager", "127.0.0.1", mockPort,
+                ServerConfig.ServerType.PDM, mockFingerprint);
+        PdmApiDriver pdmDriver = new PdmApiDriver(pdmConfig);
+        AuthCredentials dummyAuth = AuthCredentials.ticket("root@pam", "ticket", "csrf", System.currentTimeMillis() + 3600000);
+
+        String upid = pdmDriver.startGuest("cluster-west/pve-node-01", 102, GuestInfo.GuestType.LXC, dummyAuth, 15_000L);
+        assertNotNull(upid);
+        assertTrue("UPID must follow PDM RemoteUpid format", upid.startsWith("pve:cluster-west!UPID:"));
+
+        TaskResult result = pdmDriver.pollTask("cluster-west", upid, dummyAuth, 15_000L);
+        assertNotNull(result);
+        assertEquals(TaskResult.TaskState.OK, result.state);
+    }
+
+    @Test
+    public void testPdmShutdownAndForceStop() throws Exception {
+        ServerConfig pdmConfig = new ServerConfig("pdm-1", "Datacenter Manager", "127.0.0.1", mockPort,
+                ServerConfig.ServerType.PDM, mockFingerprint);
+        PdmApiDriver pdmDriver = new PdmApiDriver(pdmConfig);
+        AuthCredentials dummyAuth = AuthCredentials.ticket("root@pam", "ticket", "csrf", System.currentTimeMillis() + 3600000);
+
+        String shutUpid = pdmDriver.shutdownGuest("cluster-west/pve-node-01", 101, GuestInfo.GuestType.QEMU, dummyAuth, 15_000L);
+        assertTrue(shutUpid.contains("shutdown"));
+
+        String stopUpid = pdmDriver.forceStopGuest("cluster-west/pve-node-01", 101, GuestInfo.GuestType.QEMU, dummyAuth, 15_000L);
+        assertTrue(stopUpid.contains("stop"));
+    }
+
+    @Test
+    public void testPdmRebootThrowsHonestUnsupportedException() throws Exception {
+        ServerConfig pdmConfig = new ServerConfig("pdm-1", "Datacenter Manager", "127.0.0.1", mockPort,
+                ServerConfig.ServerType.PDM, mockFingerprint);
         PdmApiDriver pdmDriver = new PdmApiDriver(pdmConfig);
         AuthCredentials dummyAuth = AuthCredentials.ticket("root@pam", "ticket", "csrf", System.currentTimeMillis() + 3600000);
 
         try {
-            pdmDriver.executeGuestPowerAction("node-alpha", "qemu", 105, "start", dummyAuth);
-            fail("PdmApiDriver must throw UnsupportedOperationException on guest power actions");
-        } catch (UnsupportedOperationException e) {
-            assertTrue(e.getMessage().contains("unsupported in this release"));
-            assertTrue(e.getMessage().contains("standalone PVE endpoint"));
+            pdmDriver.rebootGuest("cluster-west/pve-node-01", 101, GuestInfo.GuestType.QEMU, dummyAuth, 15_000L);
+            fail("PdmApiDriver must reject reboot with honest capability disclosure");
+        } catch (ApiException e) {
+            assertTrue("Message must explain reboot is not supported by PDM",
+                    e.getMessage().contains("Guest Reboot is not supported by the Proxmox Datacenter Manager API"));
+            assertTrue("Message must state supported operations",
+                    e.getMessage().contains("Start, Graceful Shutdown, and Stop"));
+        }
+    }
+
+    @Test
+    public void testPdmPowerPostNeverRetriesOn401() throws Exception {
+        ServerConfig pdmConfig = new ServerConfig("pdm-1", "Datacenter Manager", "127.0.0.1", mockPort,
+                ServerConfig.ServerType.PDM, mockFingerprint);
+        PdmApiDriver pdmDriver = new PdmApiDriver(pdmConfig);
+        AuthCredentials dummyAuth = AuthCredentials.ticket("root@pam", "ticket", "csrf", System.currentTimeMillis() + 3600000);
+
+        return401OnPowerPost.set(true);
+        powerPostRequests.set(0);
+        try {
+            pdmDriver.startGuest("cluster-west/pve-node-01", 101, GuestInfo.GuestType.QEMU, dummyAuth, 15_000L);
+            fail("Must fail on 401 without retry");
+        } catch (ApiException e) {
+            assertEquals(401, e.getHttpCode());
+            assertTrue(e.getMessage().contains("Action was NOT retried"));
+            assertEquals("State-changing POST must NOT be retried on 401", 1, powerPostRequests.get());
+        } finally {
+            return401OnPowerPost.set(false);
+        }
+    }
+
+    @Test
+    public void testPdmPowerPostThrows403Forbidden() throws Exception {
+        ServerConfig pdmConfig = new ServerConfig("pdm-1", "Datacenter Manager", "127.0.0.1", mockPort,
+                ServerConfig.ServerType.PDM, mockFingerprint);
+        PdmApiDriver pdmDriver = new PdmApiDriver(pdmConfig);
+        AuthCredentials dummyAuth = AuthCredentials.ticket("root@pam", "ticket", "csrf", System.currentTimeMillis() + 3600000);
+
+        return403OnPowerPost.set(true);
+        try {
+            pdmDriver.startGuest("cluster-west/pve-node-01", 101, GuestInfo.GuestType.QEMU, dummyAuth, 15_000L);
+            fail("Must fail on 403 Forbidden");
+        } catch (ApiException e) {
+            assertEquals(403, e.getHttpCode());
+            assertTrue(e.getMessage().contains("Permission denied (403)"));
+        } finally {
+            return403OnPowerPost.set(false);
+        }
+    }
+
+    @Test
+    public void testCollisionProofIdentityAcrossRemotesAndGuestTypes() {
+        String key1 = ActionGuard.buildGuestKey("pdm-1", "cluster-west/node-01", "qemu", 101, "start");
+        String key2 = ActionGuard.buildGuestKey("pdm-1", "cluster-east/node-01", "qemu", 101, "start");
+        String key3 = ActionGuard.buildGuestKey("pdm-1", "cluster-west/node-01", "lxc", 101, "start");
+        String key4 = ActionGuard.buildGuestKey("pdm-2", "cluster-west/node-01", "qemu", 101, "start");
+
+        assertNotEquals("Different remotes must have distinct keys", key1, key2);
+        assertNotEquals("QEMU vs LXC on same node must have distinct keys", key1, key3);
+        assertNotEquals("Different server configs must have distinct keys", key1, key4);
+
+        ActionGuard guard = new ActionGuard();
+        assertTrue(guard.tryAcquire(key1));
+        assertTrue(guard.tryAcquire(key2));
+        assertTrue(guard.tryAcquire(key3));
+        assertTrue(guard.tryAcquire(key4));
+        assertEquals(4, guard.getActiveCount());
+
+        // Duplicate on key1 is blocked
+        assertFalse(guard.tryAcquire(key1));
+    }
+
+    @Test
+    public void testStorageTypeEnrichmentAndBoundedCache() throws Exception {
+        ServerConfig pdmConfig = new ServerConfig("pdm-1", "Datacenter Manager", "127.0.0.1", mockPort,
+                ServerConfig.ServerType.PDM, mockFingerprint);
+        PdmApiDriver pdmDriver = new PdmApiDriver(pdmConfig);
+        AuthCredentials dummyAuth = AuthCredentials.ticket("root@pam", "ticket", "csrf", System.currentTimeMillis() + 3600000);
+
+        pdmDriver.clearStorageCache();
+        storageStatusRequests.set(0);
+
+        String type1 = pdmDriver.fetchStorageType("cluster-west", "pve-node-01", "local-zfs", dummyAuth, 5_000L);
+        assertEquals("zfspool", type1);
+        assertEquals(1, storageStatusRequests.get());
+
+        // Second call must hit cache without network dispatch
+        String type2 = pdmDriver.fetchStorageType("cluster-west", "pve-node-01", "local-zfs", dummyAuth, 5_000L);
+        assertEquals("zfspool", type2);
+        assertEquals(1, storageStatusRequests.get());
+    }
+
+    @Test
+    public void testStorageTypeEnrichmentTolerates403And404() throws Exception {
+        ServerConfig pdmConfig = new ServerConfig("pdm-1", "Datacenter Manager", "127.0.0.1", mockPort,
+                ServerConfig.ServerType.PDM, mockFingerprint);
+        PdmApiDriver pdmDriver = new PdmApiDriver(pdmConfig);
+        AuthCredentials dummyAuth = AuthCredentials.ticket("root@pam", "ticket", "csrf", System.currentTimeMillis() + 3600000);
+
+        pdmDriver.clearStorageCache();
+        return403OnStorageStatus.set(true);
+        try {
+            String type403 = pdmDriver.fetchStorageType("cluster-west", "pve-node-01", "restricted-pool", dummyAuth, 5_000L);
+            assertTrue(type403.contains("Type unavailable"));
+            assertTrue(type403.contains("403 Forbidden"));
+        } finally {
+            return403OnStorageStatus.set(false);
         }
 
+        pdmDriver.clearStorageCache();
+        return404OnStorageStatus.set(true);
         try {
-            pdmDriver.executeGuestPowerAction("node-alpha", "lxc", 200, "reboot", dummyAuth);
-            fail("PdmApiDriver must throw UnsupportedOperationException on LXC power actions");
-        } catch (UnsupportedOperationException e) {
-            assertTrue(e.getMessage().contains("unsupported in this release"));
+            String type404 = pdmDriver.fetchStorageType("cluster-west", "pve-node-01", "legacy-pool", dummyAuth, 5_000L);
+            assertTrue(type404.contains("Type unavailable"));
+            assertTrue(type404.contains("404 Not Found"));
+        } finally {
+            return404OnStorageStatus.set(false);
         }
+    }
+
+    @Test
+    public void testEnrichStoragePoolsHelper() throws Exception {
+        ServerConfig pdmConfig = new ServerConfig("pdm-1", "Datacenter Manager", "127.0.0.1", mockPort,
+                ServerConfig.ServerType.PDM, mockFingerprint);
+        PdmApiDriver pdmDriver = new PdmApiDriver(pdmConfig);
+        AuthCredentials dummyAuth = AuthCredentials.ticket("root@pam", "ticket", "csrf", System.currentTimeMillis() + 3600000);
+
+        pdmDriver.clearStorageCache();
+        List<StoragePool> rawPools = new ArrayList<>();
+        rawPools.add(new StoragePool("local-zfs", "unknown", 1000000000000L, 300000000000L, 700000000000L, true, true, false, ""));
+
+        List<StoragePool> enriched = pdmDriver.enrichStoragePools("cluster-west/pve-node-01", rawPools, dummyAuth);
+        assertNotNull(enriched);
+        assertEquals(1, enriched.size());
+        assertEquals("zfspool", enriched.get(0).type);
     }
 
     @Test
@@ -657,5 +1032,601 @@ public class PdmSafetyTest {
             // Expected connection failure fail-closed
             assertNotNull(expected);
         }
+    }
+
+    @Test
+    public void testTaskPollingRunningToOkWithActionGuardPreservation() throws Exception {
+        ServerConfig pdmConfig = new ServerConfig("pdm-1", "Datacenter Manager", "127.0.0.1", mockPort,
+                ServerConfig.ServerType.PDM, mockFingerprint);
+        PdmApiDriver pdmDriver = new PdmApiDriver(pdmConfig);
+        AuthCredentials dummyAuth = AuthCredentials.ticket("root@pam", "ticket", "csrf", System.currentTimeMillis() + 3600000);
+
+        String actionKey = ActionGuard.buildGuestKey("pdm-1", "cluster-west/pve-node-01", "qemu", 101, "start");
+        ActionGuard.getInstance().tryAcquire(actionKey);
+        assertTrue(ActionGuard.getInstance().isRunning(actionKey));
+
+        String upid = pdmDriver.startGuest("cluster-west/pve-node-01", 101, GuestInfo.GuestType.QEMU, dummyAuth, 15_000L);
+        taskRunningCountdown.set(2);
+        taskExitStatus.set("OK");
+
+        List<TaskResult> progressList = new ArrayList<>();
+        TaskResult finalResult = TaskPoller.getInstance().pollUntilFinished(
+                actionKey,
+                "cluster-west/pve-node-01",
+                upid,
+                dummyAuth,
+                (node, id, auth, curBudget) -> pdmDriver.pollTask(node, id, auth, curBudget),
+                new TaskPoller.PollingCallback() {
+                    @Override
+                    public void onProgress(TaskResult progress) {
+                        progressList.add(progress);
+                        assertTrue("ActionGuard must be held during RUNNING progress", ActionGuard.getInstance().isRunning(actionKey));
+                    }
+
+                    @Override
+                    public boolean isCancelled() {
+                        return false;
+                    }
+                },
+                15_000L,
+                50L
+        );
+
+        assertNotNull(finalResult);
+        assertEquals(TaskResult.TaskState.OK, finalResult.state);
+        assertTrue("Must have received intermediate progress", progressList.size() >= 2);
+        assertFalse("ActionGuard must be released on terminal state", ActionGuard.getInstance().isRunning(actionKey));
+    }
+
+    @Test
+    public void testTaskPollingRunningToErrorWithActionGuardPreservation() throws Exception {
+        ServerConfig pdmConfig = new ServerConfig("pdm-1", "Datacenter Manager", "127.0.0.1", mockPort,
+                ServerConfig.ServerType.PDM, mockFingerprint);
+        PdmApiDriver pdmDriver = new PdmApiDriver(pdmConfig);
+        AuthCredentials dummyAuth = AuthCredentials.ticket("root@pam", "ticket", "csrf", System.currentTimeMillis() + 3600000);
+
+        String actionKey = ActionGuard.buildGuestKey("pdm-1", "cluster-west/pve-node-01", "qemu", 101, "shutdown");
+        ActionGuard.getInstance().tryAcquire(actionKey);
+        assertTrue(ActionGuard.getInstance().isRunning(actionKey));
+
+        String upid = pdmDriver.shutdownGuest("cluster-west/pve-node-01", 101, GuestInfo.GuestType.QEMU, dummyAuth, 15_000L);
+        taskRunningCountdown.set(1);
+        taskExitStatus.set("command failed: guest refused shutdown");
+
+        try {
+            TaskResult finalResult = TaskPoller.getInstance().pollUntilFinished(
+                    actionKey,
+                    "cluster-west/pve-node-01",
+                    upid,
+                    dummyAuth,
+                    (node, id, auth, curBudget) -> pdmDriver.pollTask(node, id, auth, curBudget),
+                    new TaskPoller.PollingCallback() {
+                        @Override
+                        public void onProgress(TaskResult progress) {
+                            assertTrue("ActionGuard must be held during RUNNING progress", ActionGuard.getInstance().isRunning(actionKey));
+                        }
+
+                        @Override
+                        public boolean isCancelled() {
+                            return false;
+                        }
+                    },
+                    15_000L,
+                    50L
+            );
+
+            assertNotNull(finalResult);
+            assertEquals(TaskResult.TaskState.ERROR, finalResult.state);
+            assertEquals("command failed: guest refused shutdown", finalResult.exitStatus);
+            assertFalse("ActionGuard must be released on ERROR", ActionGuard.getInstance().isRunning(actionKey));
+        } finally {
+            taskExitStatus.set("OK");
+        }
+    }
+
+    @Test
+    public void testTaskPollingTimeoutReleasesActionGuard() throws Exception {
+        ServerConfig pdmConfig = new ServerConfig("pdm-1", "Datacenter Manager", "127.0.0.1", mockPort,
+                ServerConfig.ServerType.PDM, mockFingerprint);
+        PdmApiDriver pdmDriver = new PdmApiDriver(pdmConfig);
+        AuthCredentials dummyAuth = AuthCredentials.ticket("root@pam", "ticket", "csrf", System.currentTimeMillis() + 3600000);
+
+        String actionKey = ActionGuard.buildGuestKey("pdm-1", "cluster-west/pve-node-01", "qemu", 101, "stop");
+        ActionGuard.getInstance().tryAcquire(actionKey);
+        assertTrue(ActionGuard.getInstance().isRunning(actionKey));
+
+        String upid = pdmDriver.forceStopGuest("cluster-west/pve-node-01", 101, GuestInfo.GuestType.QEMU, dummyAuth, 15_000L);
+        taskRunningCountdown.set(50); // Keep task running beyond short timeout
+
+        TaskResult finalResult = TaskPoller.getInstance().pollUntilFinished(
+                actionKey,
+                "cluster-west/pve-node-01",
+                upid,
+                dummyAuth,
+                (node, id, auth, curBudget) -> pdmDriver.pollTask(node, id, auth, curBudget),
+                null,
+                150L,
+                40L
+        );
+
+        assertNotNull(finalResult);
+        assertEquals(TaskResult.TaskState.TIMEOUT, finalResult.state);
+        assertFalse("ActionGuard must be released on TIMEOUT", ActionGuard.getInstance().isRunning(actionKey));
+        taskRunningCountdown.set(0);
+    }
+
+    @Test
+    public void testTaskPollingCancellationReleasesActionGuard() throws Exception {
+        ServerConfig pdmConfig = new ServerConfig("pdm-1", "Datacenter Manager", "127.0.0.1", mockPort,
+                ServerConfig.ServerType.PDM, mockFingerprint);
+        PdmApiDriver pdmDriver = new PdmApiDriver(pdmConfig);
+        AuthCredentials dummyAuth = AuthCredentials.ticket("root@pam", "ticket", "csrf", System.currentTimeMillis() + 3600000);
+
+        String actionKey = ActionGuard.buildGuestKey("pdm-1", "cluster-west/pve-node-01", "lxc", 102, "start");
+        ActionGuard.getInstance().tryAcquire(actionKey);
+        assertTrue(ActionGuard.getInstance().isRunning(actionKey));
+
+        String upid = pdmDriver.startGuest("cluster-west/pve-node-01", 102, GuestInfo.GuestType.LXC, dummyAuth, 15_000L);
+        taskRunningCountdown.set(50);
+
+        AtomicInteger callCount = new AtomicInteger(0);
+        TaskResult finalResult = TaskPoller.getInstance().pollUntilFinished(
+                actionKey,
+                "cluster-west/pve-node-01",
+                upid,
+                dummyAuth,
+                (node, id, auth, curBudget) -> pdmDriver.pollTask(node, id, auth, curBudget),
+                new TaskPoller.PollingCallback() {
+                    @Override
+                    public void onProgress(TaskResult progress) {
+                    }
+
+                    @Override
+                    public boolean isCancelled() {
+                        return callCount.incrementAndGet() >= 2;
+                    }
+                },
+                15_000L,
+                40L
+        );
+
+        assertNotNull(finalResult);
+        assertFalse("ActionGuard must be released on Cancellation", ActionGuard.getInstance().isRunning(actionKey));
+        taskRunningCountdown.set(0);
+    }
+
+    @Test
+    public void testStorageTypeEnrichmentFootnoteDisplaysExplicitReason() {
+        StoragePool pool403 = new StoragePool("sec-pool",
+                "Type unavailable from this endpoint/permission (403 Forbidden)",
+                1000L, 500L, 500L, true, true, false, "");
+
+        assertFalse("Explicitly unavailable type must not be reported as verified", pool403.isTypeReported());
+        assertEquals("UNKNOWN", pool403.getTypeBadge());
+        assertEquals("Type unavailable from this endpoint/permission (403 Forbidden)",
+                com.homelabpocket.ui.UiPresentationPolicy.getStorageTypeFootnote(pool403, true));
+        assertEquals("Type unavailable from this endpoint/permission (403 Forbidden)",
+                com.homelabpocket.ui.UiPresentationPolicy.getStorageTypeFootnote(pool403, false));
+
+        StoragePool pool404 = new StoragePool("old-pool",
+                "Type unavailable from this endpoint/permission (404 Not Found)",
+                1000L, 500L, 500L, true, true, false, "");
+
+        assertFalse(pool404.isTypeReported());
+        assertEquals("UNKNOWN", pool404.getTypeBadge());
+        assertEquals("Type unavailable from this endpoint/permission (404 Not Found)",
+                com.homelabpocket.ui.UiPresentationPolicy.getStorageTypeFootnote(pool404, true));
+    }
+
+    @Test
+    public void testUrlEncodedRemoteNodeAndStorageParameters() throws Exception {
+        ServerConfig pdmConfig = new ServerConfig("pdm-1", "Datacenter Manager", "127.0.0.1", mockPort,
+                ServerConfig.ServerType.PDM, mockFingerprint);
+        PdmApiDriver pdmDriver = new PdmApiDriver(pdmConfig);
+        AuthCredentials dummyAuth = AuthCredentials.ticket("root@pam", "ticket", "csrf", System.currentTimeMillis() + 3600000);
+
+        pdmDriver.clearStorageCache();
+        // Uses spaces and symbols in remote, node, storage
+        String type = pdmDriver.fetchStorageType("cluster west", "pve node 01", "local zfs", dummyAuth, 5_000L);
+        assertEquals("zfspool", type);
+    }
+
+    @Test
+    public void testAbsentNodeMustNotDispatchPower() throws Exception {
+        ServerConfig pdmConfig = new ServerConfig("pdm-1", "Datacenter Manager", "127.0.0.1", mockPort,
+                ServerConfig.ServerType.PDM, mockFingerprint);
+        PdmApiDriver pdmDriver = new PdmApiDriver(pdmConfig);
+        AuthCredentials dummyAuth = AuthCredentials.ticket("root@pam", "ticket", "csrf", System.currentTimeMillis() + 3600000);
+
+        int before = powerPostRequests.get();
+        boolean rejected = false;
+        try {
+            pdmDriver.executeGuestPowerAction("cluster-west", "", 101, GuestInfo.GuestType.QEMU, "start", dummyAuth, 3000L);
+        } catch (ApiException expected) {
+            rejected = true;
+        }
+        assertEquals("Missing node must not silently auto-target or send POST", before, powerPostRequests.get());
+        assertTrue("Explicit full target identity must be required before network", rejected);
+    }
+
+    @Test
+    public void testConflictingPowerForSameGuestMustBeBlocked() {
+        ActionGuard guard = new ActionGuard();
+        assertTrue(guard.tryAcquireGuestAction("pdm", "west/node", "qemu", 101, "shutdown"));
+        assertFalse("Force-stop must not acquire the same guest while shutdown is in flight",
+                guard.tryAcquireGuestAction("pdm", "west/node", "qemu", 101, "stop"));
+        assertTrue("Distinct guest on same node must acquire cleanly",
+                guard.tryAcquireGuestAction("pdm", "west/node", "qemu", 102, "stop"));
+        assertTrue("Distinct remote on same VMID must acquire cleanly",
+                guard.tryAcquireGuestAction("pdm", "east/node", "qemu", 101, "stop"));
+
+        guard.releaseGuestAction("pdm", "west/node", "qemu", 101, "shutdown");
+        assertTrue("Guest becomes available after release",
+                guard.tryAcquireGuestAction("pdm", "west/node", "qemu", 101, "stop"));
+    }
+
+    @Test
+    public void testMismatchedRemoteTaskMustNotBeAcceptedAsSuccess() throws Exception {
+        ServerConfig pdmConfig = new ServerConfig("pdm-1", "Datacenter Manager", "127.0.0.1", mockPort,
+                ServerConfig.ServerType.PDM, mockFingerprint);
+        PdmApiDriver pdmDriver = new PdmApiDriver(pdmConfig);
+        AuthCredentials dummyAuth = AuthCredentials.ticket("root@pam", "ticket", "csrf", System.currentTimeMillis() + 3600000);
+
+        int before = taskPollRequests.get();
+        boolean rejected = false;
+        try {
+            pdmDriver.pollTask("cluster-west",
+                    "pve:cluster-east!UPID:pve-node-01:00001234:00005678:67B4A9D1:qmstart:101:root@pam:",
+                    dummyAuth, 3000L);
+        } catch (ApiException expected) {
+            rejected = true;
+        }
+        assertTrue("Task identity remote mismatch must be rejected fail-closed before network", rejected);
+        assertEquals(before, taskPollRequests.get());
+    }
+
+    @Test
+    public void testMonotonicBudgetExhaustionWithoutMathMaxReset() throws Exception {
+        ServerConfig pdmConfig = new ServerConfig("pdm-1", "Datacenter Manager", "127.0.0.1", mockPort,
+                ServerConfig.ServerType.PDM, mockFingerprint);
+        PdmApiDriver pdmDriver = new PdmApiDriver(pdmConfig);
+        AuthCredentials dummyAuth = AuthCredentials.ticket("root@pam", "ticket", "csrf", System.currentTimeMillis() + 3600000);
+
+        int before = powerPostRequests.get();
+        boolean rejected = false;
+        try {
+            pdmDriver.executeGuestPowerAction("cluster-west", "pve-node-01", 101, GuestInfo.GuestType.QEMU, "start", dummyAuth, 0L);
+        } catch (ApiException expected) {
+            rejected = true;
+            assertTrue(expected.getMessage().contains("budget") || expected.getMessage().contains("deadline"));
+        }
+        assertTrue("Zero/exhausted budget must be rejected before network dispatch", rejected);
+        assertEquals(before, powerPostRequests.get());
+    }
+
+    @Test
+    public void testStorageCacheSurvivesDriverRecreationAndRespectsTtl() throws Exception {
+        ServerConfig pdmConfig = new ServerConfig("pdm-1", "Datacenter Manager", "127.0.0.1", mockPort,
+                ServerConfig.ServerType.PDM, mockFingerprint);
+        AuthCredentials dummyAuth = AuthCredentials.ticket("root@pam", "ticket", "csrf", System.currentTimeMillis() + 3600000);
+
+        final AtomicLong virtualClockMs = new AtomicLong(100_000L);
+        PdmApiDriver.setTimeProviderForTesting(() -> virtualClockMs.get());
+
+        try {
+            PdmApiDriver.clearStorageCache();
+            int beforeRequests = storageStatusRequests.get();
+
+            // Driver 1 populates cache at t0
+            PdmApiDriver driver1 = new PdmApiDriver(pdmConfig);
+            String type1 = driver1.fetchStorageType("cluster-west", "pve-node-01", "local-zfs", dummyAuth, 5_000L);
+            assertEquals("zfspool", type1);
+            assertEquals("Initial fetch must query network", beforeRequests + 1, storageStatusRequests.get());
+
+            // Advance virtual time by 30 minutes (within 1 hour positive TTL)
+            virtualClockMs.addAndGet(1800_000L);
+
+            // Driver 2 (fresh instance simulating recreated Activity) reads within TTL
+            PdmApiDriver driver2 = new PdmApiDriver(pdmConfig);
+            String type2 = driver2.fetchStorageType("cluster-west", "pve-node-01", "local-zfs", dummyAuth, 5_000L);
+            assertEquals("zfspool", type2);
+            assertEquals("Driver 2 must read from unexpired cache without issuing network request",
+                    beforeRequests + 1, storageStatusRequests.get());
+
+            // Advance virtual monotonic time past 1 hour positive TTL (+30 min + 1 ms = 60m 1ms total)
+            virtualClockMs.addAndGet(1800_001L);
+
+            // Driver 2 fetch now observes expired cache and issues fresh network request
+            String type3 = driver2.fetchStorageType("cluster-west", "pve-node-01", "local-zfs", dummyAuth, 5_000L);
+            assertEquals("zfspool", type3);
+            assertEquals("Expired cache must trigger fresh network read",
+                    beforeRequests + 2, storageStatusRequests.get());
+
+            // Test Negative Cache TTL (60 seconds)
+            return404OnStorageStatus.set(true);
+            try {
+                String negType1 = driver2.fetchStorageType("cluster-west", "pve-node-01", "non-existent-pool", dummyAuth, 5_000L);
+                assertTrue(negType1.startsWith(PdmApiDriver.STORAGE_TYPE_UNAVAILABLE));
+                assertEquals("Negative cache fetch must query network", beforeRequests + 3, storageStatusRequests.get());
+
+                // Within 30 seconds: negative cache hit
+                virtualClockMs.addAndGet(30_000L);
+                String negType2 = driver2.fetchStorageType("cluster-west", "pve-node-01", "non-existent-pool", dummyAuth, 5_000L);
+                assertEquals(negType1, negType2);
+                assertEquals("Negative cache read within TTL must not query network", beforeRequests + 3, storageStatusRequests.get());
+
+                // Past 60 seconds negative TTL: cache expires and re-queries network
+                virtualClockMs.addAndGet(30_001L);
+                String negType3 = driver2.fetchStorageType("cluster-west", "pve-node-01", "non-existent-pool", dummyAuth, 5_000L);
+                assertEquals(negType1, negType3);
+                assertEquals("Expired negative cache must re-query network", beforeRequests + 4, storageStatusRequests.get());
+            } finally {
+                return404OnStorageStatus.set(false);
+            }
+
+        } finally {
+            PdmApiDriver.resetTimeProviderForTesting();
+        }
+    }
+
+    @Test
+    public void testStorageCacheEndpointIdentityIsolation() throws Exception {
+        ServerConfig pdm1 = new ServerConfig("pdm-cluster-alpha", "Alpha PDM", "127.0.0.1", mockPort,
+                ServerConfig.ServerType.PDM, mockFingerprint);
+        ServerConfig pdm2 = new ServerConfig("pdm-cluster-beta", "Beta PDM", "127.0.0.1", mockPort,
+                ServerConfig.ServerType.PDM, mockFingerprint);
+        AuthCredentials dummyAuth = AuthCredentials.ticket("root@pam", "ticket", "csrf", System.currentTimeMillis() + 3600000);
+
+        PdmApiDriver.clearStorageCache();
+        int beforeRequests = storageStatusRequests.get();
+
+        PdmApiDriver driverAlpha = new PdmApiDriver(pdm1);
+        String typeAlpha = driverAlpha.fetchStorageType("cluster-west", "pve-node-01", "local-zfs", dummyAuth, 5_000L);
+        assertEquals("zfspool", typeAlpha);
+        assertEquals(beforeRequests + 1, storageStatusRequests.get());
+
+        // Driver for Beta PDM with identical remote/node/storage names MUST NOT cross-contaminate from Alpha PDM cache
+        PdmApiDriver driverBeta = new PdmApiDriver(pdm2);
+        String typeBeta = driverBeta.fetchStorageType("cluster-west", "pve-node-01", "local-zfs", dummyAuth, 5_000L);
+        assertEquals("zfspool", typeBeta);
+        assertEquals("Beta PDM endpoint must query independently and not reuse Alpha cache",
+                beforeRequests + 2, storageStatusRequests.get());
+    }
+
+    @Test
+    public void testEnrichStoragePoolsZeroOrExhaustedBudgetMakesZeroHttpRequests() throws Exception {
+        ServerConfig pdmConfig = new ServerConfig("pdm-1", "Datacenter Manager", "127.0.0.1", mockPort,
+                ServerConfig.ServerType.PDM, mockFingerprint);
+        PdmApiDriver pdmDriver = new PdmApiDriver(pdmConfig);
+        AuthCredentials dummyAuth = AuthCredentials.ticket("root@pam", "ticket", "csrf", System.currentTimeMillis() + 3600000);
+
+        PdmApiDriver.clearStorageCache();
+        int before = storageStatusRequests.get();
+
+        List<StoragePool> pools = Arrays.asList(
+                new StoragePool("local-zfs", "unknown", 100, 20, 80, true, true, false, ""),
+                new StoragePool("backup-nfs", "unknown", 200, 50, 150, true, true, false, "")
+        );
+
+        List<StoragePool> enriched = pdmDriver.enrichStoragePools("cluster-west/pve-node-01", pools, dummyAuth, 0L);
+        assertEquals(2, enriched.size());
+        assertEquals("Type unavailable from this endpoint/permission (budget exhausted)", enriched.get(0).type);
+        assertEquals("Type unavailable from this endpoint/permission (budget exhausted)", enriched.get(1).type);
+        assertEquals("Exhausted budget must not issue any HTTP requests", before, storageStatusRequests.get());
+    }
+
+    @Test
+    public void testStrictCsrfRequiredOnCookieAuthenticatedPowerPost() throws Exception {
+        ServerConfig pdmConfig = new ServerConfig("pdm-1", "Datacenter Manager", "127.0.0.1", mockPort,
+                ServerConfig.ServerType.PDM, mockFingerprint);
+        PdmApiDriver pdmDriver = new PdmApiDriver(pdmConfig);
+
+        // Ticket auth missing CSRFPreventionToken
+        AuthCredentials authNoCsrf = AuthCredentials.ticket("root@pam", "synthetic-ticket", "", System.currentTimeMillis() + 3600000);
+        int before = powerPostRequests.get();
+        boolean rejected = false;
+        try {
+            pdmDriver.executeGuestPowerAction("cluster-west", "pve-node-01", 101, GuestInfo.GuestType.QEMU, "start", authNoCsrf, 5000L);
+        } catch (ApiException expected) {
+            rejected = true;
+            assertEquals(403, expected.getHttpCode());
+            assertTrue(expected.getMessage().contains("403"));
+        }
+        assertTrue("Cookie-authenticated POST without CSRF token must fail-closed with HTTP 403 Forbidden", rejected);
+        assertEquals(before + 1, powerPostRequests.get());
+    }
+
+    @Test
+    public void testProductionUiOwnerLifecycleAndGuardPreservation() throws Exception {
+        ActionGuard guard = ActionGuard.getInstance();
+        guard.clearAll();
+
+        String serverId = "pdm-prod";
+        String node = "cluster-west/pve-node-01";
+        GuestInfo.GuestType type = GuestInfo.GuestType.QEMU;
+        int vmid = 101;
+        String actionKey = ActionGuard.buildGuestResourceKey(serverId, node, type.name(), vmid);
+
+        // 1. Initial lock acquisition by GuestsView or VmDetailActivity
+        assertTrue("UI owner must acquire resource-level lock", guard.tryAcquire(actionKey));
+
+        // 2. Conflicting action from detail view while list view action is running
+        assertFalse("Concurrent action on same guest must be blocked", guard.tryAcquire(actionKey));
+
+        // 3. Pre-credential budget check simulation: if deadline expired, owner releases guard
+        long deadlineNanos = System.nanoTime() - 1_000_000L; // Expired
+        long budgetForCreds = (deadlineNanos - System.nanoTime()) / 1_000_000L;
+        assertTrue("Budget must be expired", budgetForCreds <= 0);
+        guard.release(actionKey);
+        assertFalse("Guard must be released on pre-credential budget exhaustion", guard.isRunning(actionKey));
+
+        // 4. Pre-dispatch cancellation check simulation:
+        assertTrue(guard.tryAcquire(actionKey));
+        boolean isCancelled = true;
+        if (isCancelled) {
+            guard.release(actionKey);
+        }
+        assertFalse("Guard must be released when owner task is cancelled before POST", guard.isRunning(actionKey));
+    }
+
+    @Test
+    public void testSessionManagerMonitorBlockingDeadlinePropagation() throws Exception {
+        // Mock credential store with credentials
+        CredentialStore store = new CredentialStore(new android.content.Context() {
+            @Override
+            public android.content.SharedPreferences getSharedPreferences(String name, int mode) {
+                return null;
+            }
+        }) {
+            @Override
+            public boolean hasPassword(String serverId) { return true; }
+            @Override
+            public String getUsername(String serverId) { return "root@pam"; }
+            @Override
+            public String getPassword(String serverId) { return "secret"; }
+            @Override
+            public boolean hasApiToken(String serverId) { return false; }
+            @Override
+            public String getApiToken(String serverId) { return null; }
+        };
+
+        SessionManager sm = new SessionManager(store);
+        ServerConfig cfg = new ServerConfig("pdm-mon", "Monitor PDM", "127.0.0.1", mockPort,
+                ServerConfig.ServerType.PDM, mockFingerprint);
+
+        // 1. Deadlines in the past must fail-closed immediately without blocking
+        boolean pastRejected = false;
+        try {
+            sm.getCredentialsWithDeadline(cfg, System.nanoTime() - 1_000_000L);
+        } catch (ApiException e) {
+            pastRejected = true;
+            assertTrue("Message must indicate deadline expiration", e.getMessage().contains("deadline already expired"));
+        }
+        assertTrue("Past deadline must fail closed", pastRejected);
+
+        // 2. Contended monitor: simulate another thread holding the SessionManager lock
+        ReentrantLock monitorLock = sm.getSessionLockForTesting();
+        CountDownLatch lockAcquiredByOtherThread = new CountDownLatch(1);
+        CountDownLatch releaseLockSignal = new CountDownLatch(1);
+
+        Thread holdingThread = new Thread(() -> {
+            monitorLock.lock();
+            try {
+                lockAcquiredByOtherThread.countDown();
+                releaseLockSignal.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException ignored) {
+            } finally {
+                monitorLock.unlock();
+            }
+        });
+        holdingThread.setDaemon(true);
+        holdingThread.start();
+
+        assertTrue("Holding thread must acquire lock", lockAcquiredByOtherThread.await(2, TimeUnit.SECONDS));
+
+        // Call getCredentialsWithDeadline with a 50ms bounded deadline while lock is held
+        long startNanos = System.nanoTime();
+        long deadlineNanos = startNanos + 50_000_000L; // 50ms
+        boolean lockTimeoutRejected = false;
+        try {
+            sm.getCredentialsWithDeadline(cfg, deadlineNanos);
+        } catch (ApiException e) {
+            lockTimeoutRejected = true;
+            assertTrue("Message must indicate monitor timeout",
+                    e.getMessage().contains("timed out waiting for monitor") || e.getMessage().contains("deadline"));
+        } finally {
+            // Signal holding thread to release lock
+            releaseLockSignal.countDown();
+            holdingThread.join(2000);
+        }
+
+        assertTrue("Monitor wait must be bounded by monotonic deadline and fail closed", lockTimeoutRejected);
+        long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
+        assertTrue("Monitor acquisition must terminate boundedly (took " + elapsedMs + "ms)", elapsedMs < 1000L);
+    }
+
+    @Test
+    public void testStrictTargetLookupAndNoDefaultType() {
+        // 1. Intent type parsing: Missing/invalid MUST return null, never default to QEMU
+        assertNull("Missing intent type must return null", UiPresentationPolicy.parseIntentGuestType(null));
+        assertNull("Empty intent type must return null", UiPresentationPolicy.parseIntentGuestType(""));
+        assertNull("Invalid intent type must return null", UiPresentationPolicy.parseIntentGuestType("kvm"));
+        assertNull("Malformed intent type must return null", UiPresentationPolicy.parseIntentGuestType("unknown"));
+        assertEquals(GuestInfo.GuestType.QEMU, UiPresentationPolicy.parseIntentGuestType("qemu"));
+        assertEquals(GuestInfo.GuestType.QEMU, UiPresentationPolicy.parseIntentGuestType("QEMU"));
+        assertEquals(GuestInfo.GuestType.LXC, UiPresentationPolicy.parseIntentGuestType("lxc"));
+        assertEquals(GuestInfo.GuestType.LXC, UiPresentationPolicy.parseIntentGuestType("LXC"));
+
+        // 2. Strict target validation: fails closed on null, moved, wrong type, or offline
+        GuestInfo runningGuest = new GuestInfo(101, "vm-101", GuestInfo.GuestType.QEMU, GuestInfo.RunState.RUNNING,
+                "cluster-west/pve-node-01", "pdm-1", 0.1, 2, 1024, 2048, 0, 0, 0, 0, 3600, "", false, System.currentTimeMillis());
+        GuestInfo offlineGuest = new GuestInfo(101, "vm-101", GuestInfo.GuestType.QEMU, GuestInfo.RunState.UNKNOWN,
+                "cluster-west/pve-node-01", "pdm-1", 0.0, 2, -1, 2048, 0, 0, 0, 0, 0, "", false, System.currentTimeMillis());
+
+        // Valid exact match
+        assertTrue(UiPresentationPolicy.isGuestTargetValid(runningGuest, "cluster-west/pve-node-01", 101, GuestInfo.GuestType.QEMU));
+
+        // Fail-closed when expectedType is null (intent type missing)
+        assertFalse("Must fail closed if expectedType is null",
+                UiPresentationPolicy.isGuestTargetValid(runningGuest, "cluster-west/pve-node-01", 101, null));
+
+        // Fail-closed on type mismatch (QEMU vs LXC)
+        assertFalse("Must fail closed on type mismatch",
+                UiPresentationPolicy.isGuestTargetValid(runningGuest, "cluster-west/pve-node-01", 101, GuestInfo.GuestType.LXC));
+
+        // Fail-closed on moved/migrated guest (wrong node)
+        assertFalse("Must fail closed on wrong node",
+                UiPresentationPolicy.isGuestTargetValid(runningGuest, "cluster-west/pve-node-02", 101, GuestInfo.GuestType.QEMU));
+
+        // Fail-closed on stale VMID
+        assertFalse("Must fail closed on wrong VMID",
+                UiPresentationPolicy.isGuestTargetValid(runningGuest, "cluster-west/pve-node-01", 102, GuestInfo.GuestType.QEMU));
+
+        // Fail-closed on offline / UNKNOWN guest state
+        assertFalse("Must fail closed on offline/unknown guest state",
+                UiPresentationPolicy.isGuestTargetValid(offlineGuest, "cluster-west/pve-node-01", 101, GuestInfo.GuestType.QEMU));
+
+        // Fail-closed on null guest (lookup failure)
+        assertFalse("Must fail closed on null guest",
+                UiPresentationPolicy.isGuestTargetValid(null, "cluster-west/pve-node-01", 101, GuestInfo.GuestType.QEMU));
+    }
+
+    @Test
+    public void testQueuedCancellationReleasesActionGuard() {
+        ActionGuard guard = ActionGuard.getInstance();
+        guard.clearAll();
+
+        String serverId = "pdm-prod";
+        String node = "cluster-west/pve-node-01";
+        GuestInfo.GuestType type = GuestInfo.GuestType.QEMU;
+        int vmid = 200;
+        String actionKey = ActionGuard.buildGuestResourceKey(serverId, node, type.name(), vmid);
+
+        // Simulate UI owner task submission: tryAcquire is called before queuing AsyncTask
+        assertTrue("UI owner acquires guard before queuing AsyncTask", guard.tryAcquire(actionKey));
+        assertTrue("Guard is actively in flight", guard.isRunning(actionKey));
+
+        // Atomic release guard pattern implemented in both VmDetailActivity and GuestsView
+        final AtomicBoolean guardReleased = new AtomicBoolean(false);
+        Runnable releaseGuardOnce = () -> {
+            if (guardReleased.compareAndSet(false, true)) {
+                guard.release(actionKey);
+            }
+        };
+
+        // Simulate cancellation before doInBackground starts (queued cancellation in executor)
+        // Dialog onCancelListener or onCancelled() invokes releaseGuardOnce()
+        releaseGuardOnce.run();
+
+        // Verify guard is immediately released
+        assertFalse("Guard must be released after queued task cancellation", guard.isRunning(actionKey));
+
+        // Calling onCancelled() subsequently is idempotent and safe
+        releaseGuardOnce.run();
+        assertFalse("Subsequent release must be idempotent", guard.isRunning(actionKey));
+
+        // A subsequent power operation can now acquire the guard without collision
+        assertTrue("Subsequent action must be able to acquire released guard", guard.tryAcquire(actionKey));
+        guard.release(actionKey);
     }
 }

@@ -1,4 +1,41 @@
-# v0.1.1-alpha verification
+# v0.1.3-alpha verification
+
+## Independently exercised for this release
+
+- Isolated build passed resource compilation, Java compilation, **254 JVM behavioral tests**, D8, APK packaging, zipalign, and signature verification.
+- The 254-test suite incorporates the 8 frozen acceptance probes overlapping the main behavioral suite (verifying they are part of the baseline, not 8 additional unique test cases).
+- API token 401 deadline fixture verified: under lock contention, the 40ms deadline returns bounded in 40ms rather than stalling (previously 361ms RED).
+- Exercised PDM guest power dispatch (Start, Graceful Shutdown, Force Stop) with non-retrying POST execution, `ActionGuard` concurrent action prevention (active during client tracking), and task lifecycle tracking.
+- Exercised storage backend status enrichment (`/status` endpoint for `dir`, `lvm`, `lvmthin`, `zfspool`, `nfs`) with bounded LRU caching and fallback handling on HTTP 403 or unpopulated endpoints.
+- Exercised presentation handling for `UNKNOWN` guest/host states and radial CPU/RAM fleet gauges.
+- The four gallery images (`docs/screenshots/{overview,hosts,guests,node-detail}.png`) are actual user-provided phone captures with cropped status and navigation bars. They demonstrate real UI rendering, live multi-cluster inventory, guest power controls, and storage pool types (`lvmthin`, `dir`). No credentials or private network information are exposed.
+
+## Released APK
+
+- Filename: `pve-pocket-v0.1.3-alpha.apk`
+- Application ID: `com.homelabpocket`
+- Version: `0.1.3-alpha`, versionCode `6`
+- Minimum Android API: `26`; target API: `29`
+- Size: **175085 bytes**
+- SHA-256: `077e5ca653392c73ebf6b3f82540a78d0e69df30ba2ac218447c87a6cf6ae234`
+- APK Signature Scheme v2 and v3 verified.
+- Signing certificate SHA-256: `869037568e2aabf3b1030d21fc08ed331d4732f3387929504d1b2e3b38ebae5e`, matching the certificate used for v0.1.0-alpha, v0.1.1-alpha, and v0.1.2-alpha for upgrade continuity.
+- This is a debug-signed alpha for testing. Local builds may use different debug keys; CI keys are ephemeral, and neither can upgrade this release artifact.
+- Cloud CI status: The release workflow verifies this commit on Ubuntu/JDK 17 before APK publication; see the repository Actions tab for its result.
+
+## Limits and disclosures
+
+- Concurrency guard (`ActionGuard`) only holds during client tracking, not necessarily server-side completion. Cancel stops client tracking, not an already-dispatched server operation. Timeout/network failure may leave the outcome unknown; verify guest/task state before submitting another action.
+- Real device screenshots confirm phone UI layout and live inventory display. They do not constitute comprehensive physical device lifecycle, Keystore, biometric, or live power-action qualification. Automated JVM tests are not full device tests.
+- Testing was conducted without issuing live power mutation requests to production hypervisors.
+- Upstream Reboot Limitation: Guest reboot is not supported by upstream PDM API endpoints. The app honestly rejects PDM guest reboot and directs users to perform Graceful Shutdown and wait until confirmed stopped before issuing Start; no synthetic or simulated reboots are performed.
+- Storage backend status enrichment queries `/nodes/{node}/storage/{storage}/status` with an in-memory bounded LRU cache. Older PDM versions or permission-restricted accounts cleanly fall back to `Unavailable` or `?`.
+- Storage durability: configuration and credentials reside in separate SharedPreferences files. Writes are not crash-atomic across files.
+- Terminal streaming remains unsupported on both backends; browser fallback opens the web management interface.
+
+---
+
+# Historical v0.1.1-alpha verification
 
 ## Independently exercised for this release
 

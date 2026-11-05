@@ -15,6 +15,7 @@ import com.homelabpocket.model.TaskResult;
  * - Enforces monotonic timeout bounds (Clock.monotonicTimeMs) to guard against clock skew or infinite loops.
  * - Surfaces explicit disclosures for OK, ERROR, TIMEOUT, and UNKNOWN states.
  * - Supports cooperative cancellation and progress dispatch to UI callbacks.
+ * - Ownership-aware: supports ActionGuard.TaskLifecycleOwner and ActionGuard.Lease to prevent ABA releases.
  */
 public class TaskPoller {
 
@@ -74,14 +75,6 @@ public class TaskPoller {
     /**
      * Polls a Proxmox task (UPID) until completion, deadline, or cancellation.
      * Preserves actionKey in ActionGuard until execution reaches terminal state.
-     *
-     * @param actionKey ActionGuard key currently acquired (released in finally)
-     * @param nodeName Host node name
-     * @param upid Task UPID string
-     * @param auth Server credentials
-     * @param fetcher Implementation calling pve.pollTask
-     * @param callback Optional progress and cancellation callback
-     * @return Terminal TaskResult (OK, ERROR, TIMEOUT, or UNKNOWN)
      */
     public TaskResult pollUntilFinished(String actionKey,
                                        String nodeName,
@@ -125,19 +118,63 @@ public class TaskPoller {
                                        PollingCallback callback,
                                        long timeoutMs,
                                        long pollIntervalMs) {
+        return pollUntilFinishedInternal(actionKey, null, null, nodeName, upid, auth, fetcher, callback, timeoutMs, pollIntervalMs);
+    }
 
-        if (upid == null || upid.trim().isEmpty()) {
-            if (actionKey != null) {
+    public TaskResult pollUntilFinished(ActionGuard.TaskLifecycleOwner lifecycleOwner,
+                                       String nodeName,
+                                       String upid,
+                                       AuthCredentials auth,
+                                       BoundedTaskStatusFetcher fetcher,
+                                       PollingCallback callback,
+                                       long timeoutMs,
+                                       long pollIntervalMs) {
+        String actionKey = (lifecycleOwner != null) ? lifecycleOwner.getKey() : null;
+        ActionGuard.Lease lease = (lifecycleOwner != null) ? lifecycleOwner.getLease() : null;
+        return pollUntilFinishedInternal(actionKey, lease, lifecycleOwner, nodeName, upid, auth, fetcher, callback, timeoutMs, pollIntervalMs);
+    }
+
+    public TaskResult pollUntilFinished(ActionGuard.Lease lease,
+                                       String nodeName,
+                                       String upid,
+                                       AuthCredentials auth,
+                                       BoundedTaskStatusFetcher fetcher,
+                                       PollingCallback callback,
+                                       long timeoutMs,
+                                       long pollIntervalMs) {
+        String actionKey = (lease != null) ? lease.getKey() : null;
+        return pollUntilFinishedInternal(actionKey, lease, null, nodeName, upid, auth, fetcher, callback, timeoutMs, pollIntervalMs);
+    }
+
+    private TaskResult pollUntilFinishedInternal(String actionKey,
+                                                ActionGuard.Lease lease,
+                                                ActionGuard.TaskLifecycleOwner lifecycleOwner,
+                                                String nodeName,
+                                                String upid,
+                                                AuthCredentials auth,
+                                                BoundedTaskStatusFetcher fetcher,
+                                                PollingCallback callback,
+                                                long timeoutMs,
+                                                long pollIntervalMs) {
+
+        Runnable releaseGuard = () -> {
+            if (lifecycleOwner != null) {
+                lifecycleOwner.release();
+            } else if (lease != null) {
+                lease.release();
+            } else if (actionKey != null) {
                 ActionGuard.getInstance().release(actionKey);
             }
+        };
+
+        if (upid == null || upid.trim().isEmpty()) {
+            releaseGuard.run();
             return new TaskResult(upid, TaskResult.TaskState.ERROR,
                     "Invalid task UPID (empty or null)", null, 0, 0, nodeName);
         }
 
         if (fetcher == null) {
-            if (actionKey != null) {
-                ActionGuard.getInstance().release(actionKey);
-            }
+            releaseGuard.run();
             return new TaskResult(upid, TaskResult.TaskState.ERROR,
                     "TaskStatusFetcher cannot be null", null, 0, 0, nodeName);
         }
@@ -159,18 +196,18 @@ public class TaskPoller {
                 // 2. Monotonic deadline verification before network probe
                 long nowMs = clock.monotonicTimeMs();
                 if (nowMs >= deadlineMs) {
-                    long elapsedSec = Math.max(1, (nowMs - startMs) / 1000);
+                    long elapsedSec = (nowMs - startMs) / 1000;
                     return new TaskResult(upid, TaskResult.TaskState.TIMEOUT,
                             "Task polling timed out after " + elapsedSec + "s without completion",
                             null, startMs / 1000, nowMs / 1000, nodeName);
                 }
 
-                long remainingBudgetMs = deadlineMs - nowMs;
+                long remainingMs = deadlineMs - nowMs;
 
-                // 3. Poll current status bounded by remaining budget
+                // 3. Execute bounded network poll
                 TaskResult current;
                 try {
-                    current = fetcher.poll(nodeName, upid, auth, remainingBudgetMs);
+                    current = fetcher.poll(nodeName, upid, auth, remainingMs);
                 } catch (ApiException e) {
                     if (clock.monotonicTimeMs() >= deadlineMs) {
                         long elapsedSec = Math.max(1, (clock.monotonicTimeMs() - startMs) / 1000);
@@ -226,36 +263,21 @@ public class TaskPoller {
                             startMs / 1000, clock.monotonicTimeMs() / 1000, nodeName);
                 }
 
-                // 4. Check for terminal states
-                if (current.state == TaskResult.TaskState.OK) {
-                    return current;
-                }
-                if (current.state == TaskResult.TaskState.ERROR) {
-                    return current;
-                }
-                if (current.state == TaskResult.TaskState.TIMEOUT) {
-                    return current;
-                }
-                if (current.state == TaskResult.TaskState.UNKNOWN) {
+                // 4. Handle Terminal States
+                if (current.isFinished()) {
                     return current;
                 }
 
-                // 5. Task still RUNNING: dispatch intermediate progress
+                // 5. Still RUNNING: Dispatch progress notification
                 if (callback != null) {
                     callback.onProgress(current);
                 }
 
-                // 6. Check cooperative cancellation again before sleep
-                if (callback != null && callback.isCancelled()) {
-                    return new TaskResult(upid, TaskResult.TaskState.UNKNOWN,
-                            "Task polling cancelled by user", null,
-                            startMs / 1000, clock.monotonicTimeMs() / 1000, nodeName);
-                }
-
-                // 7. Bounded monotonic sleep
-                long remainingMs = deadlineMs - clock.monotonicTimeMs();
+                // 6. Cooperative sleep bounded by remaining interval and deadline
+                nowMs = clock.monotonicTimeMs();
+                remainingMs = deadlineMs - nowMs;
                 if (remainingMs <= 0) {
-                    long elapsedSec = Math.max(1, (clock.monotonicTimeMs() - startMs) / 1000);
+                    long elapsedSec = (nowMs - startMs) / 1000;
                     return new TaskResult(upid, TaskResult.TaskState.TIMEOUT,
                             "Task polling timed out after " + elapsedSec + "s without completion",
                             null, startMs / 1000, clock.monotonicTimeMs() / 1000, nodeName);
@@ -272,11 +294,9 @@ public class TaskPoller {
                 }
             }
         } finally {
-            // Guard preservation guarantee: actionKey is NEVER released while RUNNING,
+            // Guard preservation guarantee: actionKey/lease is NEVER released while RUNNING,
             // and ALWAYS released when terminal state, deadline, cancellation, or exception occurs.
-            if (actionKey != null) {
-                ActionGuard.getInstance().release(actionKey);
-            }
+            releaseGuard.run();
         }
     }
 }

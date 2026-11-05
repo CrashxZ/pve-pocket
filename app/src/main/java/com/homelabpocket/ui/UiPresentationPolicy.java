@@ -203,13 +203,24 @@ public final class UiPresentationPolicy {
     /**
      * Determines whether guest lifecycle power controls (Start, Shutdown, Reboot, Stop)
      * are supported and should be rendered in UI.
+     * In v0.1.3-alpha, guest power is supported for both PVE and PDM endpoints.
      */
     public static boolean isGuestPowerAllowed(ServerConfig server) {
+        return true;
+    }
+
+    /**
+     * Determines whether host lifecycle power controls (Host Node Reboot, Shutdown)
+     * are supported and should be rendered in UI.
+     * Host power operations are strictly disabled on PDM endpoints (guest power only).
+     */
+    public static boolean isHostPowerAllowed(ServerConfig server) {
         return !isPdm(server);
     }
 
     /**
      * Determines whether host shell button is supported and should be rendered in UI.
+     * Host direct shell streaming is disabled on PDM endpoints.
      */
     public static boolean isHostShellAllowed(ServerConfig server) {
         return !isPdm(server);
@@ -217,18 +228,193 @@ public final class UiPresentationPolicy {
 
     /**
      * Determines whether guest console/shell button is supported and should be rendered.
+     * Guest terminal streaming is disabled on PDM endpoints fail-closed.
      */
     public static boolean isGuestConsoleAllowed(ServerConfig server) {
         return !isPdm(server);
     }
 
     /**
+     * Encapsulates the expected binding state of guest power and terminal controls
+     * in VmDetailActivity and GuestsView.
+     * Provides testable view-binding verification in headless unit tests.
+     */
+    public static final class GuestDetailBindingState {
+        public final boolean isPowerCardVisible;
+        public final boolean isStartButtonVisible;
+        public final boolean isShutdownButtonVisible;
+        public final boolean isRebootButtonVisible;
+        public final boolean isForceStopButtonVisible;
+        public final boolean isTerminalCardVisible;
+        public final boolean isTerminalButtonVisible;
+        public final boolean isPdmNoticeVisible;
+
+        public GuestDetailBindingState(
+                boolean isPowerCardVisible,
+                boolean isStartButtonVisible,
+                boolean isShutdownButtonVisible,
+                boolean isRebootButtonVisible,
+                boolean isForceStopButtonVisible,
+                boolean isTerminalCardVisible,
+                boolean isTerminalButtonVisible,
+                boolean isPdmNoticeVisible) {
+            this.isPowerCardVisible = isPowerCardVisible;
+            this.isStartButtonVisible = isStartButtonVisible;
+            this.isShutdownButtonVisible = isShutdownButtonVisible;
+            this.isRebootButtonVisible = isRebootButtonVisible;
+            this.isForceStopButtonVisible = isForceStopButtonVisible;
+            this.isTerminalCardVisible = isTerminalCardVisible;
+            this.isTerminalButtonVisible = isTerminalButtonVisible;
+            this.isPdmNoticeVisible = isPdmNoticeVisible;
+        }
+    }
+
+    /**
+     * Evaluates the view-binding state for guest power lifecycle controls in VmDetailActivity.
+     */
+    public static GuestDetailBindingState evaluateGuestDetailBinding(GuestInfo guest, ServerConfig server) {
+        if (guest == null) return null;
+        boolean isPdm = isPdm(server);
+        boolean isRunning = (guest.state == GuestInfo.RunState.RUNNING);
+        boolean isStopped = (guest.state == GuestInfo.RunState.STOPPED);
+        boolean isUnknown = (guest.state == GuestInfo.RunState.UNKNOWN || (!isRunning && !isStopped));
+
+        boolean isPowerCardVisible = !isUnknown;
+        boolean isStartButtonVisible = isStopped;
+        boolean isShutdownButtonVisible = isRunning;
+        boolean isRebootButtonVisible = isRunning;
+        boolean isForceStopButtonVisible = isRunning;
+
+        // Terminal streaming is disabled on PDM fail-closed and disabled for unknown
+        boolean isTerminalCardVisible = !isPdm && !isUnknown;
+        boolean isTerminalButtonVisible = !isPdm && !isUnknown;
+        boolean isPdmNoticeVisible = false;
+
+        return new GuestDetailBindingState(
+                isPowerCardVisible,
+                isStartButtonVisible,
+                isShutdownButtonVisible,
+                isRebootButtonVisible,
+                isForceStopButtonVisible,
+                isTerminalCardVisible,
+                isTerminalButtonVisible,
+                isPdmNoticeVisible);
+    }
+
+    /**
+     * Encapsulates the expected binding state of a guest item card in GuestsView.
+     */
+    public static final class GuestCardBindingState {
+        public final boolean isMetricsVisible;
+        public final boolean isStartButtonVisible;
+        public final boolean isStartButtonEnabled;
+        public final boolean isShutdownButtonVisible;
+        public final boolean isShutdownButtonEnabled;
+        public final boolean isRebootButtonVisible;
+        public final boolean isRebootButtonEnabled;
+        public final boolean isForceStopButtonVisible;
+        public final boolean isForceStopButtonEnabled;
+        public final boolean isConsoleVisible;
+        public final String statusText;
+
+        public GuestCardBindingState(
+                boolean isMetricsVisible,
+                boolean isStartButtonVisible,
+                boolean isStartButtonEnabled,
+                boolean isShutdownButtonVisible,
+                boolean isShutdownButtonEnabled,
+                boolean isRebootButtonVisible,
+                boolean isRebootButtonEnabled,
+                boolean isForceStopButtonVisible,
+                boolean isForceStopButtonEnabled,
+                boolean isConsoleVisible,
+                String statusText) {
+            this.isMetricsVisible = isMetricsVisible;
+            this.isStartButtonVisible = isStartButtonVisible;
+            this.isStartButtonEnabled = isStartButtonEnabled;
+            this.isShutdownButtonVisible = isShutdownButtonVisible;
+            this.isShutdownButtonEnabled = isShutdownButtonEnabled;
+            this.isRebootButtonVisible = isRebootButtonVisible;
+            this.isRebootButtonEnabled = isRebootButtonEnabled;
+            this.isForceStopButtonVisible = isForceStopButtonVisible;
+            this.isForceStopButtonEnabled = isForceStopButtonEnabled;
+            this.isConsoleVisible = isConsoleVisible;
+            this.statusText = statusText;
+        }
+    }
+
+    /**
+     * Evaluates the view-binding state for guest power lifecycle controls in GuestsView.
+     */
+    public static GuestCardBindingState evaluateGuestCardBinding(GuestInfo guest, ServerConfig server) {
+        if (guest == null) return null;
+        boolean isPdm = isPdm(server);
+        boolean isRunning = (guest.state == GuestInfo.RunState.RUNNING);
+        boolean isStopped = (guest.state == GuestInfo.RunState.STOPPED);
+        boolean isUnknown = (guest.state == GuestInfo.RunState.UNKNOWN || (!isRunning && !isStopped));
+
+        boolean isMetricsVisible = isRunning;
+        boolean isStartVisible = isStopped;
+        boolean isStartEnabled = isStopped;
+        boolean isShutdownVisible = isRunning;
+        boolean isShutdownEnabled = isRunning;
+        boolean isRebootVisible = isRunning;
+        boolean isRebootEnabled = isRunning;
+        boolean isForceStopVisible = isRunning;
+        boolean isForceStopEnabled = isRunning;
+        boolean isConsoleVisible = !isPdm && !isUnknown;
+        String statusText = isRunning ? "RUNNING" : isStopped ? "STOPPED" : "UNKNOWN";
+
+        return new GuestCardBindingState(
+                isMetricsVisible,
+                isStartVisible, isStartEnabled,
+                isShutdownVisible, isShutdownEnabled,
+                isRebootVisible, isRebootEnabled,
+                isForceStopVisible, isForceStopEnabled,
+                isConsoleVisible,
+                statusText);
+    }
+
+    /**
+     * Parses guest type from Android Intent extras fail-closed.
+     * Missing, empty, or unparseable values return null rather than defaulting to QEMU.
+     */
+    public static GuestInfo.GuestType parseIntentGuestType(String typeStr) {
+        if ("LXC".equalsIgnoreCase(typeStr)) {
+            return GuestInfo.GuestType.LXC;
+        } else if ("QEMU".equalsIgnoreCase(typeStr)) {
+            return GuestInfo.GuestType.QEMU;
+        }
+        return null;
+    }
+
+    /**
+     * Verifies that the resolved guest matches exact required target parameters.
+     * Prevents dispatching operations to stale, moved, or offline guests.
+     */
+    public static boolean isGuestTargetValid(GuestInfo guest, String expectedNode, int expectedVmid, GuestInfo.GuestType expectedType) {
+        if (guest == null) return false;
+        if (expectedVmid <= 0 || guest.vmid != expectedVmid) return false;
+        if (expectedNode == null || expectedNode.isEmpty() || !expectedNode.equals(guest.node)) return false;
+        if (expectedType == null || guest.type != expectedType) return false;
+        if (guest.state == null || guest.state == GuestInfo.RunState.UNKNOWN) return false;
+        return true;
+    }
+
+    /**
      * Storage pool driver type explanatory note.
-     * Returns "Type not reported by PDM" when driver type is unknown on PDM;
+     * When storage type is explicitly unavailable from endpoint or permission, surfaces the exact reason;
+     * returns "Type not reported by PDM" when driver type is unknown on PDM;
      * "Type not reported" when unknown on PVE / generic; null when reported.
      */
     public static String getStorageTypeFootnote(StoragePool pool, boolean isPdm) {
-        if (pool == null || pool.isTypeReported()) {
+        if (pool == null) {
+            return null;
+        }
+        if (pool.type != null && pool.type.startsWith("Type unavailable")) {
+            return pool.type;
+        }
+        if (pool.isTypeReported()) {
             return null;
         }
         return isPdm ? STORAGE_TYPE_NOT_REPORTED_PDM : STORAGE_TYPE_NOT_REPORTED;
@@ -618,7 +804,7 @@ public final class UiPresentationPolicy {
             for (GuestInfo g : guests) {
                 if (g.state == GuestInfo.RunState.RUNNING) {
                     runningGuests++;
-                } else {
+                } else if (g.state == GuestInfo.RunState.STOPPED) {
                     stoppedGuests++;
                 }
             }

@@ -47,6 +47,56 @@ public class PdmApiDriver {
     public static final String PATH_TICKET = "/access/ticket";
     public static final String PATH_REMOTES = "/remotes";
     public static final String PATH_RESOURCES_LIST = "/resources/list";
+    public static final String STORAGE_TYPE_UNAVAILABLE = "Type unavailable from this endpoint/permission";
+
+    public interface TimeProvider {
+        long monotonicTimeMs();
+    }
+
+    public static final TimeProvider SYSTEM_TIME_PROVIDER = () -> System.nanoTime() / 1_000_000L;
+
+    private static volatile TimeProvider timeProvider = SYSTEM_TIME_PROVIDER;
+
+    public static void setTimeProviderForTesting(TimeProvider provider) {
+        timeProvider = (provider != null) ? provider : SYSTEM_TIME_PROVIDER;
+    }
+
+    public static void resetTimeProviderForTesting() {
+        timeProvider = SYSTEM_TIME_PROVIDER;
+    }
+
+    public static long getMonotonicTimeMs() {
+        return timeProvider.monotonicTimeMs();
+    }
+
+    public static class StorageCacheEntry {
+        public final String type;
+        public final long expiryTimeMs;
+
+        public StorageCacheEntry(String type, long expiryTimeMs) {
+            this.type = type;
+            this.expiryTimeMs = expiryTimeMs;
+        }
+
+        public boolean isExpired(long nowMs) {
+            return nowMs > expiryTimeMs;
+        }
+    }
+
+    private static final int MAX_STORAGE_CACHE_SIZE = 256;
+    public static final long STORAGE_POSITIVE_CACHE_TTL_MS = 3600_000L; // 1 hour for confirmed types
+    public static final long STORAGE_NEGATIVE_CACHE_TTL_MS = 60_000L;   // 60 seconds for errors/missing
+
+    // Shared global cache across driver instances (survives detail refresh re-instantiations)
+    private static final java.util.Map<String, StorageCacheEntry> GLOBAL_STORAGE_TYPE_CACHE =
+            Collections.synchronizedMap(
+                    new java.util.LinkedHashMap<String, StorageCacheEntry>(MAX_STORAGE_CACHE_SIZE, 0.75f, true) {
+                        @Override
+                        protected boolean removeEldestEntry(java.util.Map.Entry<String, StorageCacheEntry> eldest) {
+                            return size() > MAX_STORAGE_CACHE_SIZE;
+                        }
+                    }
+            );
 
     private final ServerConfig config;
     private final SessionManager sessionManager;
@@ -88,6 +138,11 @@ public class PdmApiDriver {
     public AuthCredentials authenticate(String username, String password, long remainingBudgetMs)
             throws ApiException, IOException {
         return apiClient.authenticate(username, password, remainingBudgetMs);
+    }
+
+    public AuthCredentials authenticateWithDeadline(String username, String password, long deadlineNanos)
+            throws ApiException, IOException {
+        return apiClient.authenticateWithDeadline(username, password, deadlineNanos);
     }
 
     // ---- Remotes Discovery ----
@@ -152,7 +207,24 @@ public class PdmApiDriver {
      */
     public List<GuestInfo> fetchAllGuests(AuthCredentials auth)
             throws ApiException, GeneralSecurityException, IOException {
-        JSONArray groups = fetchResourcesGroups(auth);
+        return fetchAllGuests(auth, 15_000L);
+    }
+
+    public List<GuestInfo> fetchAllGuests(AuthCredentials auth, long remainingBudgetMs)
+            throws ApiException, GeneralSecurityException, IOException {
+        if (remainingBudgetMs <= 0) {
+            throw new ApiException(0, "Request deadline already expired before fetching guests (" + remainingBudgetMs + "ms remaining)");
+        }
+        long deadlineNanos = System.nanoTime() + remainingBudgetMs * 1_000_000L;
+        return fetchAllGuestsWithDeadline(auth, deadlineNanos);
+    }
+
+    public List<GuestInfo> fetchAllGuestsWithDeadline(AuthCredentials auth, long deadlineNanos)
+            throws ApiException, GeneralSecurityException, IOException {
+        if (deadlineNanos > 0 && System.nanoTime() >= deadlineNanos) {
+            throw new ApiException(0, "Request deadline expired before fetching guests");
+        }
+        JSONArray groups = fetchResourcesGroupsWithDeadline(auth, deadlineNanos);
         List<GuestInfo> guests = new ArrayList<>();
 
         for (int i = 0; i < groups.length(); i++) {
@@ -230,7 +302,13 @@ public class PdmApiDriver {
 
                     if (nodeName.equals(itemFullNode)) {
                         String name = JsonUtil.optString(item, "storage", "unknown");
-                        String storageType = JsonUtil.optString(item, "plugintype", "unknown");
+                        String cacheKey = buildStorageCacheKey(remote, itemNode, name);
+                        StorageCacheEntry cachedEntry = GLOBAL_STORAGE_TYPE_CACHE.get(cacheKey);
+                        String storageType = (cachedEntry != null && !cachedEntry.isExpired(getMonotonicTimeMs()))
+                                ? cachedEntry.type : null;
+                        if (storageType == null) {
+                            storageType = JsonUtil.optString(item, "plugintype", "unknown");
+                        }
                         long disk = JsonUtil.optLong(item, "disk", -1);
                         long maxdisk = JsonUtil.optLong(item, "maxdisk", -1);
                         long avail = (maxdisk > 0 && disk >= 0) ? Math.max(0, maxdisk - disk) : -1;
@@ -261,13 +339,30 @@ public class PdmApiDriver {
      */
     public GuestInfo fetchGuestDetail(String nodeName, int vmid, GuestInfo.GuestType guestType, AuthCredentials auth)
             throws ApiException, GeneralSecurityException, IOException {
-        List<GuestInfo> guests = fetchAllGuests(auth);
+        return fetchGuestDetail(nodeName, vmid, guestType, auth, 15_000L);
+    }
+
+    public GuestInfo fetchGuestDetail(String nodeName, int vmid, GuestInfo.GuestType guestType, AuthCredentials auth, long remainingBudgetMs)
+            throws ApiException, GeneralSecurityException, IOException {
+        if (remainingBudgetMs <= 0) {
+            throw new ApiException(0, "Request deadline already expired before fetching guest detail (" + remainingBudgetMs + "ms remaining)");
+        }
+        long deadlineNanos = System.nanoTime() + remainingBudgetMs * 1_000_000L;
+        return fetchGuestDetailWithDeadline(nodeName, vmid, guestType, auth, deadlineNanos);
+    }
+
+    public GuestInfo fetchGuestDetailWithDeadline(String nodeName, int vmid, GuestInfo.GuestType guestType, AuthCredentials auth, long deadlineNanos)
+            throws ApiException, GeneralSecurityException, IOException {
+        if (guestType == null) {
+            return null; // Reject wildcard: guestType is strictly required
+        }
+        if (deadlineNanos > 0 && System.nanoTime() >= deadlineNanos) {
+            throw new ApiException(0, "Request deadline expired before fetching guest detail");
+        }
+        List<GuestInfo> guests = fetchAllGuestsWithDeadline(auth, deadlineNanos);
         for (GuestInfo g : guests) {
-            if (g.vmid == vmid) {
-                if (guestType != null && g.type != guestType) {
-                    continue;
-                }
-                if (nodeName != null && !nodeName.trim().isEmpty() && !nodeName.equals(g.node)) {
+            if (g.vmid == vmid && g.type == guestType) {
+                if (nodeName != null && !nodeName.isEmpty() && !nodeName.equals(g.node)) {
                     continue;
                 }
                 return g;
@@ -282,7 +377,21 @@ public class PdmApiDriver {
      */
     private JSONArray fetchResourcesGroups(AuthCredentials auth)
             throws ApiException, GeneralSecurityException, IOException {
-        String response = executeWithAuthRetry(PATH_RESOURCES_LIST, "GET", null, auth);
+        return fetchResourcesGroups(auth, 15_000L);
+    }
+
+    private JSONArray fetchResourcesGroups(AuthCredentials auth, long remainingBudgetMs)
+            throws ApiException, GeneralSecurityException, IOException {
+        if (remainingBudgetMs <= 0) {
+            throw new ApiException(0, "Request deadline already expired before fetching resources (" + remainingBudgetMs + "ms remaining)");
+        }
+        long deadlineNanos = System.nanoTime() + remainingBudgetMs * 1_000_000L;
+        return fetchResourcesGroupsWithDeadline(auth, deadlineNanos);
+    }
+
+    private JSONArray fetchResourcesGroupsWithDeadline(AuthCredentials auth, long deadlineNanos)
+            throws ApiException, GeneralSecurityException, IOException {
+        String response = executeWithAuthRetryWithDeadline(PATH_RESOURCES_LIST, "GET", null, auth, deadlineNanos);
         try {
             return JsonUtil.getDataArray(response);
         } catch (JSONException e) {
@@ -290,17 +399,499 @@ public class PdmApiDriver {
         }
     }
 
-    // ---- Explicit Fail-Closed Guards: Power Actions & Terminal ----
+    // ---- Remote & Node Identity Helpers ----
+
+    public static String extractRemote(String nodeIdentity) {
+        if (nodeIdentity == null) return "";
+        int slash = nodeIdentity.indexOf('/');
+        return (slash > 0) ? nodeIdentity.substring(0, slash) : "";
+    }
+
+    public static String extractNode(String nodeIdentity) {
+        if (nodeIdentity == null) return "";
+        int slash = nodeIdentity.indexOf('/');
+        return (slash >= 0) ? nodeIdentity.substring(slash + 1) : nodeIdentity;
+    }
+
+    public static boolean isValidIdentifier(String id) {
+        if (id == null || id.isEmpty()) return false;
+        for (int i = 0; i < id.length(); i++) {
+            char c = id.charAt(i);
+            if (!Character.isLetterOrDigit(c) && c != '-' && c != '_' && c != '.') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static String extractRemoteFromUpid(String remoteUpid) {
+        if (remoteUpid == null) return "";
+        int bang = remoteUpid.indexOf('!');
+        if (bang <= 0) return "";
+        String prefix = remoteUpid.substring(0, bang);
+        int colon = prefix.indexOf(':');
+        return (colon >= 0) ? prefix.substring(colon + 1) : prefix;
+    }
 
     /**
-     * Guest power actions via PDM are explicitly unsupported in this release
-     * to prevent speculative endpoint misrouting.
+     * Fail-closed client binding verification for PDM RemoteUpid.
+     * Mirrors upstream tasks.rs verify_upid(remote, RemoteType::Pve, upid).
+     * Rejects UPID type mismatches (must be 'pve') and remote target mismatches before network.
+     * Enforces exact opaque token identity without whitespace normalization or trimming.
      */
-    public TaskResult executeGuestPowerAction(String node, String guestType, int vmid, String action, AuthCredentials auth) {
-        throw new UnsupportedOperationException(
-                "Guest power actions via PDM are explicitly unsupported in this release to prevent endpoint misrouting. " +
-                "Connect directly to the host's standalone PVE endpoint to manage guests.");
+    public static void verifyRemoteUpidBinding(String expectedRemote, String upid) throws ApiException {
+        if (upid == null || upid.isEmpty()) {
+            throw new ApiException(0, "Cannot verify empty task UPID");
+        }
+        int bang = upid.indexOf('!');
+        if (bang <= 0) {
+            throw new ApiException(0, "Invalid PDM RemoteUpid format: missing '!' separator: " + upid);
+        }
+        String prefix = upid.substring(0, bang);
+        int colon = prefix.indexOf(':');
+        if (colon <= 0) {
+            throw new ApiException(0, "Invalid PDM RemoteUpid format: missing ':' remote-type separator: " + upid);
+        }
+        String remoteType = prefix.substring(0, colon);
+        String upidRemote = prefix.substring(colon + 1);
+
+        if (!"pve".equals(remoteType)) {
+            throw new ApiException(0, "Task RemoteUpid type mismatch: expected 'pve', found '" + remoteType + "'");
+        }
+        if (expectedRemote != null && !expectedRemote.isEmpty()) {
+            if (!expectedRemote.equals(upidRemote)) {
+                throw new ApiException(0, "Task RemoteUpid remote mismatch: expected '" + expectedRemote +
+                        "', but UPID specifies '" + upidRemote + "'");
+            }
+        }
     }
+
+    // ---- Official Upstream PDM Guest Power Actions ----
+
+    /**
+     * Dispatches a guest power action via official PDM REST API.
+     * Upstream routes:
+     * - QEMU: POST /api2/json/pve/remotes/{remote}/qemu/{vmid}/{action}
+     * - LXC:  POST /api2/json/pve/remotes/{remote}/lxc/{vmid}/{action}
+     *
+     * Returns RemoteUpid string returned by PDM (e.g. "pve:cluster-west!UPID:...").
+     *
+     * Guarantees:
+     * - Explicit target identity validation (node, remote, type, VMID) strictly required before network.
+     * - Never blindly retries state-changing POST on 401 or timeout.
+     * - Single monotonic budget.
+     * - Reboot is honestly rejected with unsupported capability disclosure.
+     */
+    public String executeGuestPowerAction(String remote, String nodeName, int vmid,
+                                          GuestInfo.GuestType type, String action,
+                                          AuthCredentials auth, long budgetMs)
+            throws ApiException, GeneralSecurityException, IOException {
+        if (budgetMs <= 0) {
+            throw new ApiException(0, "Operation budget exhausted before dispatch (" + budgetMs + "ms remaining)");
+        }
+        long deadlineNanos = System.nanoTime() + budgetMs * 1_000_000L;
+        return executeGuestPowerActionWithDeadline(remote, nodeName, vmid, type, action, auth, deadlineNanos);
+    }
+
+    public String executeGuestPowerActionWithDeadline(String remote, String nodeName, int vmid,
+                                                      GuestInfo.GuestType type, String action,
+                                                      AuthCredentials auth, long deadlineNanos)
+            throws ApiException, GeneralSecurityException, IOException {
+        if (remote == null || remote.isEmpty()) {
+            throw new ApiException(0, "Cannot execute PDM guest power action: missing remote cluster identifier");
+        }
+        if (nodeName == null || nodeName.isEmpty()) {
+            throw new ApiException(0, "Cannot execute PDM guest power action: missing node identifier");
+        }
+        if (type == null) {
+            throw new ApiException(0, "Cannot execute PDM guest power action: missing guest type");
+        }
+        if (vmid <= 0) {
+            throw new ApiException(0, "Cannot execute PDM guest power action: invalid VMID: " + vmid);
+        }
+        if (action == null || action.isEmpty()) {
+            throw new ApiException(0, "Power action cannot be empty");
+        }
+
+        if (!isValidIdentifier(remote)) {
+            throw new ApiException(0, "Invalid remote identifier: '" + remote + "'");
+        }
+        if (!isValidIdentifier(nodeName)) {
+            throw new ApiException(0, "Invalid node identifier: '" + nodeName + "'");
+        }
+
+        String actionNorm = action.toLowerCase(java.util.Locale.ROOT);
+        if ("reboot".equals(actionNorm)) {
+            throw new ApiException(0, "Guest Reboot is not supported by the Proxmox Datacenter Manager API. " +
+                    "Upstream PDM provides Start, Graceful Shutdown, and Stop endpoints only. Please perform a Graceful Shutdown followed by Start.");
+        }
+        if (!"start".equals(actionNorm) && !"shutdown".equals(actionNorm) && !"stop".equals(actionNorm)) {
+            throw new ApiException(0, "Unsupported PDM guest power action: '" + action + "'. Supported actions: start, shutdown, stop.");
+        }
+
+        if (deadlineNanos > 0 && System.nanoTime() >= deadlineNanos) {
+            throw new ApiException(0, "Operation budget exhausted before dispatch");
+        }
+
+        String typeStr = (type == GuestInfo.GuestType.LXC) ? "lxc" : "qemu";
+        String encodedRemote = java.net.URLEncoder.encode(remote, "UTF-8");
+        String path = "/pve/remotes/" + encodedRemote + "/" + typeStr + "/" + vmid + "/" + actionNorm;
+
+        String formBody = "node=" + java.net.URLEncoder.encode(nodeName, "UTF-8");
+
+        String response = executePostWithoutRetryWithDeadline(path, formBody, auth, deadlineNanos);
+        try {
+            JSONObject json = new JSONObject(response);
+            if (json.has("data") && !json.isNull("data")) {
+                String upid = json.getString("data");
+                verifyRemoteUpidBinding(remote, upid);
+                return upid;
+            }
+            throw new ApiException(0, "Missing data in PDM power action response: " + response);
+        } catch (JSONException e) {
+            throw new ApiException(0, "Failed to parse PDM power action response: " + e.getMessage());
+        }
+    }
+
+    public String executeGuestPowerAction(String nodeIdentity, int vmid,
+                                          GuestInfo.GuestType type, String action,
+                                          AuthCredentials auth, long budgetMs)
+            throws ApiException, GeneralSecurityException, IOException {
+        String remote = extractRemote(nodeIdentity);
+        String node = extractNode(nodeIdentity);
+        if (remote.isEmpty() || node.isEmpty()) {
+            throw new ApiException(0, "Cannot execute PDM guest power action: composite nodeIdentity '" +
+                    nodeIdentity + "' must include both remote cluster and node name (e.g. 'remote/node')");
+        }
+        return executeGuestPowerAction(remote, node, vmid, type, action, auth, budgetMs);
+    }
+
+    public String executeGuestPowerActionWithDeadline(String nodeIdentity, int vmid,
+                                                      GuestInfo.GuestType type, String action,
+                                                      AuthCredentials auth, long deadlineNanos)
+            throws ApiException, GeneralSecurityException, IOException {
+        String remote = extractRemote(nodeIdentity);
+        String node = extractNode(nodeIdentity);
+        if (remote.isEmpty() || node.isEmpty()) {
+            throw new ApiException(0, "Cannot execute PDM guest power action: composite nodeIdentity '" +
+                    nodeIdentity + "' must include both remote cluster and node name (e.g. 'remote/node')");
+        }
+        return executeGuestPowerActionWithDeadline(remote, node, vmid, type, action, auth, deadlineNanos);
+    }
+
+    public String startGuest(String nodeIdentity, int vmid, GuestInfo.GuestType type, AuthCredentials auth, long budgetMs)
+            throws ApiException, GeneralSecurityException, IOException {
+        return executeGuestPowerAction(nodeIdentity, vmid, type, "start", auth, budgetMs);
+    }
+
+    public String startGuestWithDeadline(String nodeIdentity, int vmid, GuestInfo.GuestType type, AuthCredentials auth, long deadlineNanos)
+            throws ApiException, GeneralSecurityException, IOException {
+        return executeGuestPowerActionWithDeadline(nodeIdentity, vmid, type, "start", auth, deadlineNanos);
+    }
+
+    public String shutdownGuest(String nodeIdentity, int vmid, GuestInfo.GuestType type, AuthCredentials auth, long budgetMs)
+            throws ApiException, GeneralSecurityException, IOException {
+        return executeGuestPowerAction(nodeIdentity, vmid, type, "shutdown", auth, budgetMs);
+    }
+
+    public String shutdownGuestWithDeadline(String nodeIdentity, int vmid, GuestInfo.GuestType type, AuthCredentials auth, long deadlineNanos)
+            throws ApiException, GeneralSecurityException, IOException {
+        return executeGuestPowerActionWithDeadline(nodeIdentity, vmid, type, "shutdown", auth, deadlineNanos);
+    }
+
+    public String forceStopGuest(String nodeIdentity, int vmid, GuestInfo.GuestType type, AuthCredentials auth, long budgetMs)
+            throws ApiException, GeneralSecurityException, IOException {
+        return executeGuestPowerAction(nodeIdentity, vmid, type, "stop", auth, budgetMs);
+    }
+
+    public String forceStopGuestWithDeadline(String nodeIdentity, int vmid, GuestInfo.GuestType type, AuthCredentials auth, long deadlineNanos)
+            throws ApiException, GeneralSecurityException, IOException {
+        return executeGuestPowerActionWithDeadline(nodeIdentity, vmid, type, "stop", auth, deadlineNanos);
+    }
+
+    public String rebootGuest(String nodeIdentity, int vmid, GuestInfo.GuestType type, AuthCredentials auth, long budgetMs)
+            throws ApiException {
+        throw new ApiException(0, "Guest Reboot is not supported by the Proxmox Datacenter Manager API. " +
+                "Upstream PDM provides Start, Graceful Shutdown, and Stop endpoints only. Please perform a Graceful Shutdown followed by Start.");
+    }
+
+    public String rebootGuestWithDeadline(String nodeIdentity, int vmid, GuestInfo.GuestType type, AuthCredentials auth, long deadlineNanos)
+            throws ApiException {
+        throw new ApiException(0, "Guest Reboot is not supported by the Proxmox Datacenter Manager API. " +
+                "Upstream PDM provides Start, Graceful Shutdown, and Stop endpoints only. Please perform a Graceful Shutdown followed by Start.");
+    }
+
+    /** Backward-compatible execution + polling helper carrying one monotonic budget */
+    public TaskResult executeGuestPowerAction(String node, String guestType, int vmid, String action, AuthCredentials auth)
+            throws Exception {
+        if (guestType == null) {
+            throw new ApiException(0, "Cannot execute PDM guest power action: missing guest type");
+        }
+        GuestInfo.GuestType type;
+        if ("lxc".equalsIgnoreCase(guestType)) {
+            type = GuestInfo.GuestType.LXC;
+        } else if ("qemu".equalsIgnoreCase(guestType)) {
+            type = GuestInfo.GuestType.QEMU;
+        } else {
+            throw new ApiException(0, "Cannot execute PDM guest power action: invalid or unsupported guest type '" + guestType + "'");
+        }
+
+        long totalBudgetMs = 60_000L;
+        long startNanos = System.nanoTime();
+        long deadlineNanos = startNanos + totalBudgetMs * 1_000_000L;
+
+        long dispatchBudgetMs = (deadlineNanos - System.nanoTime()) / 1_000_000L;
+        if (dispatchBudgetMs <= 0) {
+            throw new ApiException(0, "Operation budget exhausted before dispatch");
+        }
+
+        String upid = executeGuestPowerAction(node, vmid, type, action, auth, dispatchBudgetMs);
+
+        long pollBudgetMs = (deadlineNanos - System.nanoTime()) / 1_000_000L;
+        if (pollBudgetMs <= 0) {
+            throw new ApiException(0, "Operation budget exhausted before task polling");
+        }
+
+        return TaskPoller.getInstance().pollUntilFinished(
+                (ActionGuard.TaskLifecycleOwner) null, node, upid, auth,
+                (nodeName, taskId, creds, curBudget) -> pollTask(nodeName, taskId, creds, curBudget),
+                null, pollBudgetMs, 1000L);
+    }
+
+    // ---- Official Upstream PDM Task Status Polling ----
+
+    /**
+     * Polls a remote PVE task status through PDM.
+     * Route: GET /api2/json/pve/remotes/{remote}/tasks/{encodedUpid}/status
+     *
+     * Accepts either remote name ("cluster-west") or node identity ("cluster-west/pve-node-01").
+     * Enforces fail-closed RemoteUpid validation before network.
+     * This is an idempotent GET request. If session ticket has expired (401),
+     * a single ticket refresh retry within the remaining budget is permitted.
+     */
+    public TaskResult pollTask(String remoteOrNodeIdentity, String upid, AuthCredentials auth, long remainingBudgetMs)
+            throws ApiException, GeneralSecurityException, IOException {
+        if (remainingBudgetMs <= 0) {
+            throw new ApiException(0, "Operation budget exhausted before task polling (" + remainingBudgetMs + "ms remaining)");
+        }
+        long deadlineNanos = System.nanoTime() + remainingBudgetMs * 1_000_000L;
+        return pollTaskWithDeadline(remoteOrNodeIdentity, upid, auth, deadlineNanos);
+    }
+
+    public TaskResult pollTaskWithDeadline(String remoteOrNodeIdentity, String upid, AuthCredentials auth, long deadlineNanos)
+            throws ApiException, GeneralSecurityException, IOException {
+        if (deadlineNanos > 0 && System.nanoTime() >= deadlineNanos) {
+            throw new ApiException(0, "Operation budget exhausted before task polling");
+        }
+        String remote = extractRemote(remoteOrNodeIdentity);
+        if (remote.isEmpty()) {
+            if (remoteOrNodeIdentity != null && !remoteOrNodeIdentity.isEmpty()) {
+                remote = remoteOrNodeIdentity;
+            } else if (upid != null) {
+                remote = extractRemoteFromUpid(upid);
+            }
+        }
+        if (remote == null || remote.isEmpty()) {
+            throw new ApiException(0, "Cannot poll PDM task: missing remote identifier");
+        }
+        if (upid == null || upid.isEmpty()) {
+            throw new ApiException(0, "Cannot poll PDM task: missing task UPID");
+        }
+
+        // Upstream verify_upid fail-closed client binding
+        verifyRemoteUpidBinding(remote, upid);
+
+        String encodedRemote = java.net.URLEncoder.encode(remote, "UTF-8");
+        String encodedUpid = java.net.URLEncoder.encode(upid, "UTF-8");
+        String path = "/pve/remotes/" + encodedRemote + "/tasks/" + encodedUpid + "/status";
+
+        String resp = executeWithAuthRetryWithDeadline(path, "GET", null, auth, deadlineNanos);
+        try {
+            JSONObject data = JsonUtil.getDataObject(resp);
+            return parseTaskStatus(upid, data, remote);
+        } catch (JSONException e) {
+            throw new ApiException(0, "Failed to parse PDM task status: " + e.getMessage());
+        }
+    }
+
+    public TaskResult pollTask(String remoteOrNodeIdentity, String upid, AuthCredentials auth)
+            throws ApiException, GeneralSecurityException, IOException {
+        return pollTask(remoteOrNodeIdentity, upid, auth, 15_000L);
+    }
+
+    private TaskResult parseTaskStatus(String upid, JSONObject data, String fallbackNode) {
+        String status = data.optString("status", "unknown");
+        String exitStatus = data.has("exitstatus") && !data.isNull("exitstatus") ? data.optString("exitstatus") : null;
+        long startTime = JsonUtil.optLong(data, "starttime", 0);
+        long endTime = JsonUtil.optLong(data, "endtime", 0);
+        String taskNode = JsonUtil.optString(data, "node", fallbackNode);
+
+        TaskResult.TaskState state;
+        if ("running".equalsIgnoreCase(status)) {
+            state = TaskResult.TaskState.RUNNING;
+        } else if ("stopped".equalsIgnoreCase(status)) {
+            state = "OK".equalsIgnoreCase(exitStatus) ? TaskResult.TaskState.OK : TaskResult.TaskState.ERROR;
+        } else {
+            state = TaskResult.TaskState.UNKNOWN;
+        }
+
+        return new TaskResult(upid, state, exitStatus, null, startTime, endTime, taskNode);
+    }
+
+    // ---- Storage Status & Backend Type Enrichment ----
+
+    /**
+     * Encodes a tuple component safely using length prefixing to prevent delimiter collision.
+     */
+    private static String encodeComponent(String s) {
+        if (s == null) {
+            return "-1:";
+        }
+        return s.length() + ":" + s;
+    }
+
+    /**
+     * Builds a server-scoped collision-proof cache key for storage backend types.
+     * Prevents cross-contamination between distinct PDM endpoints having identical
+     * remote, node, or storage names.
+     */
+    private String buildStorageCacheKey(String remote, String nodeName, String storage) {
+        String serverId = (config != null && config.id != null && !config.id.trim().isEmpty())
+                ? config.id
+                : (config != null ? (config.host + ":" + config.port) : "default");
+        return "storage[" +
+                encodeComponent(serverId) + "," +
+                encodeComponent(remote != null ? remote : "") + "," +
+                encodeComponent(nodeName != null ? nodeName : "") + "," +
+                encodeComponent(storage != null ? storage : "") + "]";
+    }
+
+    /**
+     * Queries detailed storage status for a storage pool on a specific node.
+     * Route: GET /api2/json/pve/remotes/{remote}/nodes/{node}/storage/{storage}/status
+     *
+     * Returns backend storage type ("dir", "lvmthin", "zfspool", "nfs", etc.)
+     * from pve_api_types::StorageStatus, or explicit unavailable string on 403/404/older PDM.
+     *
+     * Cached in bounded storageTypeCache (max 256 entries).
+     */
+    public String fetchStorageType(String remote, String nodeName, String storage,
+                                   AuthCredentials auth, long budgetMs) {
+        if (remote == null || remote.isEmpty() || nodeName == null || nodeName.isEmpty() || storage == null || storage.isEmpty()) {
+            return STORAGE_TYPE_UNAVAILABLE;
+        }
+
+        String cacheKey = buildStorageCacheKey(remote, nodeName, storage);
+        long now = getMonotonicTimeMs();
+        StorageCacheEntry cached = GLOBAL_STORAGE_TYPE_CACHE.get(cacheKey);
+        if (cached != null && !cached.isExpired(now)) {
+            return cached.type;
+        }
+
+        if (budgetMs <= 0) {
+            return STORAGE_TYPE_UNAVAILABLE + " (budget exhausted)";
+        }
+
+        try {
+            String encodedRemote = java.net.URLEncoder.encode(remote, "UTF-8");
+            String encodedNode = java.net.URLEncoder.encode(nodeName, "UTF-8");
+            String encodedStorage = java.net.URLEncoder.encode(storage, "UTF-8");
+            String path = "/pve/remotes/" + encodedRemote + "/nodes/" + encodedNode + "/storage/" + encodedStorage + "/status";
+
+            String resp = executeWithAuthRetry(path, "GET", null, auth, budgetMs > 0 ? budgetMs : 5_000L);
+            JSONObject data = JsonUtil.getDataObject(resp);
+            String backendType = JsonUtil.optString(data, "type", "");
+            if (!backendType.isEmpty()) {
+                GLOBAL_STORAGE_TYPE_CACHE.put(cacheKey, new StorageCacheEntry(backendType, now + STORAGE_POSITIVE_CACHE_TTL_MS));
+                return backendType;
+            } else {
+                GLOBAL_STORAGE_TYPE_CACHE.put(cacheKey, new StorageCacheEntry(STORAGE_TYPE_UNAVAILABLE, now + STORAGE_NEGATIVE_CACHE_TTL_MS));
+                return STORAGE_TYPE_UNAVAILABLE;
+            }
+        } catch (ApiException e) {
+            String reason = (e.getHttpCode() == 403) ? " (403 Forbidden)"
+                    : (e.getHttpCode() == 404) ? " (404 Not Found)" : "";
+            String result = STORAGE_TYPE_UNAVAILABLE + reason;
+            GLOBAL_STORAGE_TYPE_CACHE.put(cacheKey, new StorageCacheEntry(result, now + STORAGE_NEGATIVE_CACHE_TTL_MS));
+            return result;
+        } catch (Exception e) {
+            String result = STORAGE_TYPE_UNAVAILABLE;
+            GLOBAL_STORAGE_TYPE_CACHE.put(cacheKey, new StorageCacheEntry(result, now + STORAGE_NEGATIVE_CACHE_TTL_MS));
+            return result;
+        }
+    }
+
+    public List<StoragePool> enrichStoragePools(String nodeIdentity, List<StoragePool> pools, AuthCredentials auth) {
+        return enrichStoragePools(nodeIdentity, pools, auth, 10_000L);
+    }
+
+    public List<StoragePool> enrichStoragePools(String nodeIdentity, List<StoragePool> pools, AuthCredentials auth, long aggregateBudgetMs) {
+        if (pools == null || pools.isEmpty()) return pools;
+        String remote = extractRemote(nodeIdentity);
+        String node = extractNode(nodeIdentity);
+        List<StoragePool> enriched = new ArrayList<>(pools.size());
+
+        // Strictly honor exhausted budget: if aggregateBudgetMs <= 0, do not reset to fallback.
+        // Instead, resolve pools from existing positive cache only without making network calls.
+        if (aggregateBudgetMs <= 0) {
+            for (StoragePool p : pools) {
+                String backendType = fetchStorageType(remote, node, p.name, auth, 0L);
+                enriched.add(new StoragePool(p.name, backendType, p.total, p.used, p.avail, p.active, p.enabled, p.shared, p.content));
+            }
+            return enriched;
+        }
+
+        long deadlineMs = getMonotonicTimeMs() + aggregateBudgetMs;
+        for (StoragePool p : pools) {
+            long remaining = deadlineMs - getMonotonicTimeMs();
+            long poolBudget = remaining > 0 ? Math.min(remaining, 5_000L) : 0L;
+            String backendType = fetchStorageType(remote, node, p.name, auth, poolBudget);
+            enriched.add(new StoragePool(p.name, backendType, p.total, p.used, p.avail, p.active, p.enabled, p.shared, p.content));
+        }
+        return enriched;
+    }
+
+    public static void clearStorageCache() {
+        GLOBAL_STORAGE_TYPE_CACHE.clear();
+    }
+
+    public void clearCache() {
+        clearStorageCache();
+    }
+
+    /**
+     * Executes a state-changing POST request strictly WITHOUT retry.
+     * Enforces the security guarantee that ambiguous outcomes (401 or timeout)
+     * are NEVER blindly retried on state-changing endpoints.
+     */
+    private String executePostWithoutRetry(String path, String formBody, AuthCredentials auth, long budgetMs)
+            throws ApiException, GeneralSecurityException, IOException {
+        if (budgetMs <= 0) {
+            throw new ApiException(0, "Request deadline exceeded before dispatch (" + budgetMs + "ms limit)");
+        }
+        long deadlineNanos = System.nanoTime() + budgetMs * 1_000_000L;
+        return executePostWithoutRetryWithDeadline(path, formBody, auth, deadlineNanos);
+    }
+
+    private String executePostWithoutRetryWithDeadline(String path, String formBody, AuthCredentials auth, long deadlineNanos)
+            throws ApiException, GeneralSecurityException, IOException {
+        if (deadlineNanos > 0 && System.nanoTime() >= deadlineNanos) {
+            throw new ApiException(0, "Request deadline exceeded before dispatch");
+        }
+        try {
+            return apiClient.postWithDeadline(path, formBody != null ? formBody : "", auth, deadlineNanos);
+        } catch (ApiException e) {
+            if (e.getHttpCode() == 403) {
+                throw new ApiException(403, "Permission denied (403): User lacks required PDM privilege for " + path);
+            }
+            if (e.getHttpCode() == 401) {
+                throw new ApiException(401, "Authentication failed (401): Ticket expired or invalid. Action was NOT retried to prevent ambiguous state.");
+            }
+            throw e;
+        }
+    }
+
+    // ---- Explicit Fail-Closed Guards: Terminal Streaming ----
 
     /**
      * Terminal routes via PDM are explicitly unsupported in this release.
@@ -433,8 +1024,8 @@ public class PdmApiDriver {
     }
 
     public String getPdmStatusDisclosure() {
-        return "PDM Supported: Real Proxmox Datacenter Manager fleet discovery and inventory monitoring active. " +
-                "Guest power actions and terminal streaming are disabled in this release to prevent endpoint misrouting.";
+        return "PDM Supported: Real Proxmox Datacenter Manager fleet discovery, inventory monitoring, and guest VM/LXC power actions (Start, Shutdown, Stop) active. " +
+                "Terminal streaming is disabled in this release to prevent endpoint misrouting.";
     }
 
     // ---- Transport & Auth Retry Logic ----
@@ -446,17 +1037,24 @@ public class PdmApiDriver {
 
     private String executeWithAuthRetry(String path, String method, String formBody, AuthCredentials auth, long budgetMs)
             throws ApiException, GeneralSecurityException, IOException {
-        long deadlineNano = (budgetMs > 0) ? (System.nanoTime() + budgetMs * 1_000_000L) : 0;
+        if (budgetMs <= 0) {
+            throw new ApiException(0, "Request deadline already expired before dispatch (" + budgetMs + "ms remaining)");
+        }
+        long deadlineNano = System.nanoTime() + budgetMs * 1_000_000L;
+        return executeWithAuthRetryWithDeadline(path, method, formBody, auth, deadlineNano);
+    }
+
+    private String executeWithAuthRetryWithDeadline(String path, String method, String formBody, AuthCredentials auth, long deadlineNano)
+            throws ApiException, GeneralSecurityException, IOException {
+        if (deadlineNano > 0 && System.nanoTime() >= deadlineNano) {
+            throw new ApiException(0, "Request deadline exceeded before dispatch");
+        }
         AuthCredentials currentAuth = auth;
         try {
-            long callBudget = (deadlineNano > 0) ? ((deadlineNano - System.nanoTime()) / 1_000_000L) : budgetMs;
-            if (deadlineNano > 0 && callBudget <= 0) {
-                throw new ApiException(0, "Request deadline exceeded before dispatch (" + budgetMs + "ms limit)");
-            }
             if ("POST".equalsIgnoreCase(method)) {
-                return apiClient.post(path, formBody != null ? formBody : "", currentAuth, callBudget > 0 ? callBudget : 15_000L);
+                return apiClient.postWithDeadline(path, formBody != null ? formBody : "", currentAuth, deadlineNano);
             } else {
-                return apiClient.get(path, currentAuth, callBudget > 0 ? callBudget : 15_000L);
+                return apiClient.getWithDeadline(path, currentAuth, deadlineNano);
             }
         } catch (ApiException e) {
             // Strict 401 vs 403 differentiation:
@@ -467,30 +1065,18 @@ public class PdmApiDriver {
 
             // 401 Unauthorized: Attempt exactly one session ticket refresh if sessionManager is available
             if (e.getHttpCode() == 401 && sessionManager != null && currentAuth != null && !currentAuth.isApiToken()) {
-                long refreshBudget = 0;
-                if (deadlineNano > 0) {
-                    long remNanos = deadlineNano - System.nanoTime();
-                    refreshBudget = remNanos / 1_000_000L;
-                    if (refreshBudget <= 0) {
-                        throw new ApiException(0, "Request deadline exceeded before ticket refresh (" + budgetMs + "ms limit)");
-                    }
+                if (deadlineNano > 0 && System.nanoTime() >= deadlineNano) {
+                    throw new ApiException(0, "Request deadline exceeded before ticket refresh");
                 }
-                AuthCredentials fresh = (refreshBudget > 0)
-                        ? sessionManager.refreshSession(config, refreshBudget)
-                        : sessionManager.refreshSession(config);
+                AuthCredentials fresh = sessionManager.refreshSessionWithDeadline(config, deadlineNano);
                 if (fresh != null) {
-                    long retryBudget = 0;
-                    if (deadlineNano > 0) {
-                        long remNanos = deadlineNano - System.nanoTime();
-                        retryBudget = remNanos / 1_000_000L;
-                        if (retryBudget <= 0) {
-                            throw new ApiException(0, "Request deadline exceeded after ticket refresh (" + budgetMs + "ms limit)");
-                        }
+                    if (deadlineNano > 0 && System.nanoTime() >= deadlineNano) {
+                        throw new ApiException(0, "Request deadline exceeded after ticket refresh");
                     }
                     if ("POST".equalsIgnoreCase(method)) {
-                        return apiClient.post(path, formBody != null ? formBody : "", fresh, retryBudget > 0 ? retryBudget : 15_000L);
+                        return apiClient.postWithDeadline(path, formBody != null ? formBody : "", fresh, deadlineNano);
                     } else {
-                        return apiClient.get(path, fresh, retryBudget > 0 ? retryBudget : 15_000L);
+                        return apiClient.getWithDeadline(path, fresh, deadlineNano);
                     }
                 }
             }

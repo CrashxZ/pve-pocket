@@ -55,32 +55,44 @@ public class PveApiDriver {
         T execute(AuthCredentials auth, long remainingBudgetMs) throws ApiException, IOException;
     }
 
+    @FunctionalInterface
+    private interface RequestActionWithDeadline<T> {
+        T execute(AuthCredentials auth, long deadlineNano) throws ApiException, IOException;
+    }
+
     private <T> T executeWithAuthRetry(AuthCredentials auth, RequestAction<T> action) throws ApiException, IOException {
-        return executeWithAuthRetry(auth, 0, action);
+        return executeWithAuthRetry(auth, 15_000L, action);
     }
 
     private <T> T executeWithAuthRetry(AuthCredentials auth, long budgetMs, RequestAction<T> action) throws ApiException, IOException {
-        long deadlineNano = (budgetMs > 0) ? (System.nanoTime() + budgetMs * 1_000_000L) : 0;
+        if (budgetMs <= 0) {
+            throw new ApiException(0, "Request deadline already expired before dispatch (" + budgetMs + "ms remaining)");
+        }
+        long deadlineNano = System.nanoTime() + budgetMs * 1_000_000L;
+        return executeWithAuthRetryWithDeadline(auth, deadlineNano, (a, dl) -> {
+            long remMs = (dl > 0) ? Math.max(1, (dl - System.nanoTime()) / 1_000_000L) : 15_000L;
+            return action.execute(a, remMs);
+        });
+    }
+
+    private <T> T executeWithAuthRetryWithDeadline(AuthCredentials auth, long deadlineNano, RequestActionWithDeadline<T> action)
+            throws ApiException, IOException {
+        if (deadlineNano > 0 && System.nanoTime() >= deadlineNano) {
+            throw new ApiException(0, "Request deadline exceeded before dispatch");
+        }
         try {
-            return action.execute(auth, budgetMs);
+            return action.execute(auth, deadlineNano);
         } catch (ApiException e) {
             if (e.getHttpCode() == 401) {
                 if (sessionManager != null) {
                     if (auth == null || !auth.isApiToken()) {
-                        long refreshBudget = 0;
-                        if (deadlineNano > 0) {
-                            long remNanos = deadlineNano - System.nanoTime();
-                            refreshBudget = remNanos / 1_000_000L;
-                            if (refreshBudget <= 0) {
-                                throw new ApiException(0, "Request deadline exceeded before ticket refresh (" + budgetMs + "ms limit)");
-                            }
+                        if (deadlineNano > 0 && System.nanoTime() >= deadlineNano) {
+                            throw new ApiException(0, "Request deadline exceeded before ticket refresh");
                         }
                         // Ticket auth: invalidate stale ticket and attempt to obtain a fresh ticket via stored credentials
                         AuthCredentials fresh = null;
                         try {
-                            fresh = (refreshBudget > 0)
-                                    ? sessionManager.refreshSession(config, refreshBudget)
-                                    : sessionManager.refreshSession(config);
+                            fresh = sessionManager.refreshSessionWithDeadline(config, deadlineNano);
                         } catch (ApiException apiEx) {
                             // If refresh failed due to deadline, rethrow immediately
                             if (apiEx.getHttpCode() == 0 && apiEx.getMessage() != null
@@ -92,19 +104,14 @@ public class PveApiDriver {
                         }
 
                         if (fresh != null) {
-                            long retryBudget = 0;
-                            if (deadlineNano > 0) {
-                                long remNanos = deadlineNano - System.nanoTime();
-                                retryBudget = remNanos / 1_000_000L;
-                                if (retryBudget <= 0) {
-                                    throw new ApiException(0, "Request deadline exceeded after ticket refresh (" + budgetMs + "ms limit)");
-                                }
+                            if (deadlineNano > 0 && System.nanoTime() >= deadlineNano) {
+                                throw new ApiException(0, "Request deadline exceeded after ticket refresh");
                             }
-                            return action.execute(fresh, retryBudget);
+                            return action.execute(fresh, deadlineNano);
                         }
                     } else {
                         // API Token or unrefreshable: invalidate cached session
-                        sessionManager.invalidateSession(config.id);
+                        sessionManager.invalidateSessionWithDeadline(config.id, deadlineNano);
                     }
                 }
             }
@@ -136,6 +143,11 @@ public class PveApiDriver {
     public AuthCredentials authenticate(String username, String password, long remainingBudgetMs)
             throws ApiException, IOException {
         return client.authenticate(username, password, remainingBudgetMs);
+    }
+
+    public AuthCredentials authenticateWithDeadline(String username, String password, long deadlineNanos)
+            throws ApiException, IOException {
+        return client.authenticateWithDeadline(username, password, deadlineNanos);
     }
 
     // ---- Node status ----
@@ -234,7 +246,22 @@ public class PveApiDriver {
      */
     public List<GuestInfo> fetchVms(String nodeName, AuthCredentials auth)
             throws ApiException, IOException {
-        String response = executeWithAuthRetry(auth, (a, rem) -> client.get("/nodes/" + nodeName + "/qemu", a));
+        return fetchVms(nodeName, auth, 15_000L);
+    }
+
+    public List<GuestInfo> fetchVms(String nodeName, AuthCredentials auth, long remainingBudgetMs)
+            throws ApiException, IOException {
+        if (remainingBudgetMs <= 0) {
+            throw new ApiException(0, "Request deadline already expired before fetching VMs (" + remainingBudgetMs + "ms remaining)");
+        }
+        long deadlineNanos = System.nanoTime() + remainingBudgetMs * 1_000_000L;
+        return fetchVmsWithDeadline(nodeName, auth, deadlineNanos);
+    }
+
+    public List<GuestInfo> fetchVmsWithDeadline(String nodeName, AuthCredentials auth, long deadlineNanos)
+            throws ApiException, IOException {
+        String path = "/nodes/" + nodeName + "/qemu";
+        String response = executeWithAuthRetryWithDeadline(auth, deadlineNanos, (a, dl) -> client.getWithDeadline(path, a, dl));
         return parseGuestList(response, nodeName, GuestInfo.GuestType.QEMU);
     }
 
@@ -243,7 +270,22 @@ public class PveApiDriver {
      */
     public List<GuestInfo> fetchContainers(String nodeName, AuthCredentials auth)
             throws ApiException, IOException {
-        String response = executeWithAuthRetry(auth, (a, rem) -> client.get("/nodes/" + nodeName + "/lxc", a));
+        return fetchContainers(nodeName, auth, 15_000L);
+    }
+
+    public List<GuestInfo> fetchContainers(String nodeName, AuthCredentials auth, long remainingBudgetMs)
+            throws ApiException, IOException {
+        if (remainingBudgetMs <= 0) {
+            throw new ApiException(0, "Request deadline already expired before fetching containers (" + remainingBudgetMs + "ms remaining)");
+        }
+        long deadlineNanos = System.nanoTime() + remainingBudgetMs * 1_000_000L;
+        return fetchContainersWithDeadline(nodeName, auth, deadlineNanos);
+    }
+
+    public List<GuestInfo> fetchContainersWithDeadline(String nodeName, AuthCredentials auth, long deadlineNanos)
+            throws ApiException, IOException {
+        String path = "/nodes/" + nodeName + "/lxc";
+        String response = executeWithAuthRetryWithDeadline(auth, deadlineNanos, (a, dl) -> client.getWithDeadline(path, a, dl));
         return parseGuestList(response, nodeName, GuestInfo.GuestType.LXC);
     }
 
@@ -256,9 +298,23 @@ public class PveApiDriver {
      */
     public List<GuestInfo> fetchAllGuests(String nodeName, AuthCredentials auth)
             throws ApiException, IOException {
+        return fetchAllGuests(nodeName, auth, 15_000L);
+    }
+
+    public List<GuestInfo> fetchAllGuests(String nodeName, AuthCredentials auth, long remainingBudgetMs)
+            throws ApiException, IOException {
+        if (remainingBudgetMs <= 0) {
+            throw new ApiException(0, "Request deadline already expired before fetching guests (" + remainingBudgetMs + "ms remaining)");
+        }
+        long deadlineNanos = System.nanoTime() + remainingBudgetMs * 1_000_000L;
+        return fetchAllGuestsWithDeadline(nodeName, auth, deadlineNanos);
+    }
+
+    public List<GuestInfo> fetchAllGuestsWithDeadline(String nodeName, AuthCredentials auth, long deadlineNanos)
+            throws ApiException, IOException {
         List<GuestInfo> all = new ArrayList<>();
-        all.addAll(fetchVms(nodeName, auth));
-        all.addAll(fetchContainers(nodeName, auth));
+        all.addAll(fetchVmsWithDeadline(nodeName, auth, deadlineNanos));
+        all.addAll(fetchContainersWithDeadline(nodeName, auth, deadlineNanos));
         return all;
     }
 
@@ -355,8 +411,24 @@ public class PveApiDriver {
     public String startGuest(String nodeName, int vmid, GuestInfo.GuestType type,
                               AuthCredentials auth)
             throws ApiException, IOException {
+        return startGuest(nodeName, vmid, type, auth, 15_000L);
+    }
+
+    public String startGuest(String nodeName, int vmid, GuestInfo.GuestType type,
+                              AuthCredentials auth, long budgetMs)
+            throws ApiException, IOException {
+        if (budgetMs <= 0) {
+            throw new ApiException(0, "Request deadline already expired before dispatch (" + budgetMs + "ms remaining)");
+        }
+        long deadlineNano = System.nanoTime() + budgetMs * 1_000_000L;
+        return startGuestWithDeadline(nodeName, vmid, type, auth, deadlineNano);
+    }
+
+    public String startGuestWithDeadline(String nodeName, int vmid, GuestInfo.GuestType type,
+                                         AuthCredentials auth, long deadlineNanos)
+            throws ApiException, IOException {
         String path = guestPath(nodeName, vmid, type) + "/status/start";
-        String response = executeWithAuthRetry(auth, (a, rem) -> client.post(path, "", a));
+        String response = executeWithAuthRetryWithDeadline(auth, deadlineNanos, (a, dl) -> client.postWithDeadline(path, "", a, dl));
         return parseUpid(response);
     }
 
@@ -367,8 +439,24 @@ public class PveApiDriver {
     public String shutdownGuest(String nodeName, int vmid, GuestInfo.GuestType type,
                                  AuthCredentials auth)
             throws ApiException, IOException {
+        return shutdownGuest(nodeName, vmid, type, auth, 15_000L);
+    }
+
+    public String shutdownGuest(String nodeName, int vmid, GuestInfo.GuestType type,
+                                 AuthCredentials auth, long budgetMs)
+            throws ApiException, IOException {
+        if (budgetMs <= 0) {
+            throw new ApiException(0, "Request deadline already expired before dispatch (" + budgetMs + "ms remaining)");
+        }
+        long deadlineNano = System.nanoTime() + budgetMs * 1_000_000L;
+        return shutdownGuestWithDeadline(nodeName, vmid, type, auth, deadlineNano);
+    }
+
+    public String shutdownGuestWithDeadline(String nodeName, int vmid, GuestInfo.GuestType type,
+                                            AuthCredentials auth, long deadlineNanos)
+            throws ApiException, IOException {
         String path = guestPath(nodeName, vmid, type) + "/status/shutdown";
-        String response = executeWithAuthRetry(auth, (a, rem) -> client.post(path, "", a));
+        String response = executeWithAuthRetryWithDeadline(auth, deadlineNanos, (a, dl) -> client.postWithDeadline(path, "", a, dl));
         return parseUpid(response);
     }
 
@@ -378,8 +466,24 @@ public class PveApiDriver {
     public String rebootGuest(String nodeName, int vmid, GuestInfo.GuestType type,
                                AuthCredentials auth)
             throws ApiException, IOException {
+        return rebootGuest(nodeName, vmid, type, auth, 15_000L);
+    }
+
+    public String rebootGuest(String nodeName, int vmid, GuestInfo.GuestType type,
+                               AuthCredentials auth, long budgetMs)
+            throws ApiException, IOException {
+        if (budgetMs <= 0) {
+            throw new ApiException(0, "Request deadline already expired before dispatch (" + budgetMs + "ms remaining)");
+        }
+        long deadlineNano = System.nanoTime() + budgetMs * 1_000_000L;
+        return rebootGuestWithDeadline(nodeName, vmid, type, auth, deadlineNano);
+    }
+
+    public String rebootGuestWithDeadline(String nodeName, int vmid, GuestInfo.GuestType type,
+                                          AuthCredentials auth, long deadlineNanos)
+            throws ApiException, IOException {
         String path = guestPath(nodeName, vmid, type) + "/status/reboot";
-        String response = executeWithAuthRetry(auth, (a, rem) -> client.post(path, "", a));
+        String response = executeWithAuthRetryWithDeadline(auth, deadlineNanos, (a, dl) -> client.postWithDeadline(path, "", a, dl));
         return parseUpid(response);
     }
 
@@ -390,9 +494,43 @@ public class PveApiDriver {
     public String forceStopGuest(String nodeName, int vmid, GuestInfo.GuestType type,
                                   AuthCredentials auth)
             throws ApiException, IOException {
+        return forceStopGuest(nodeName, vmid, type, auth, 15_000L);
+    }
+
+    public String forceStopGuest(String nodeName, int vmid, GuestInfo.GuestType type,
+                                  AuthCredentials auth, long budgetMs)
+            throws ApiException, IOException {
+        if (budgetMs <= 0) {
+            throw new ApiException(0, "Request deadline already expired before dispatch (" + budgetMs + "ms remaining)");
+        }
+        long deadlineNano = System.nanoTime() + budgetMs * 1_000_000L;
+        return forceStopGuestWithDeadline(nodeName, vmid, type, auth, deadlineNano);
+    }
+
+    public String forceStopGuestWithDeadline(String nodeName, int vmid, GuestInfo.GuestType type,
+                                             AuthCredentials auth, long deadlineNanos)
+            throws ApiException, IOException {
         String path = guestPath(nodeName, vmid, type) + "/status/stop";
-        String response = executeWithAuthRetry(auth, (a, rem) -> client.post(path, "", a));
+        String response = executeWithAuthRetryWithDeadline(auth, deadlineNanos, (a, dl) -> client.postWithDeadline(path, "", a, dl));
         return parseUpid(response);
+    }
+
+    public String stopGuest(String nodeName, int vmid, GuestInfo.GuestType type,
+                             AuthCredentials auth, long budgetMs)
+            throws ApiException, IOException {
+        return forceStopGuest(nodeName, vmid, type, auth, budgetMs);
+    }
+
+    public String stopGuest(String nodeName, int vmid, GuestInfo.GuestType type,
+                             AuthCredentials auth)
+            throws ApiException, IOException {
+        return forceStopGuest(nodeName, vmid, type, auth, 15_000L);
+    }
+
+    public String stopGuestWithDeadline(String nodeName, int vmid, GuestInfo.GuestType type,
+                                        AuthCredentials auth, long deadlineNanos)
+            throws ApiException, IOException {
+        return forceStopGuestWithDeadline(nodeName, vmid, type, auth, deadlineNanos);
     }
 
     // ---- Task polling ----
@@ -402,7 +540,7 @@ public class PveApiDriver {
      */
     public TaskResult pollTask(String nodeName, String upid, AuthCredentials auth)
             throws ApiException, IOException {
-        return pollTask(nodeName, upid, auth, 0);
+        return pollTask(nodeName, upid, auth, 15_000L);
     }
 
     /**
@@ -410,6 +548,18 @@ public class PveApiDriver {
      */
     public TaskResult pollTask(String nodeName, String upid, AuthCredentials auth, long remainingBudgetMs)
             throws ApiException, IOException {
+        if (remainingBudgetMs <= 0) {
+            throw new ApiException(0, "Operation budget exhausted before task polling (" + remainingBudgetMs + "ms remaining)");
+        }
+        long deadlineNano = System.nanoTime() + remainingBudgetMs * 1_000_000L;
+        return pollTaskWithDeadline(nodeName, upid, auth, deadlineNano);
+    }
+
+    public TaskResult pollTaskWithDeadline(String nodeName, String upid, AuthCredentials auth, long deadlineNanos)
+            throws ApiException, IOException {
+        if (deadlineNanos > 0 && System.nanoTime() >= deadlineNanos) {
+            throw new ApiException(0, "Operation budget exhausted before task polling");
+        }
         // URL-encode the UPID for the path
         String encodedUpid;
         try {
@@ -419,9 +569,7 @@ public class PveApiDriver {
         }
         String path = "/nodes/" + nodeName + "/tasks/" + encodedUpid + "/status";
         try {
-            String response = executeWithAuthRetry(auth, remainingBudgetMs, (a, curBudget) -> (curBudget > 0)
-                    ? client.getBounded(path, a, curBudget)
-                    : client.get(path, a));
+            String response = executeWithAuthRetryWithDeadline(auth, deadlineNanos, (a, dl) -> client.getWithDeadline(path, a, dl));
             JSONObject data = JsonUtil.getDataObject(response);
             return parseTaskStatus(upid, data, nodeName);
         } catch (JSONException e) {

@@ -1,30 +1,30 @@
 # PVE Pocket
 
-A native Android app for monitoring Proxmox VE (PVE) hosts and guests, with read-only fleet monitoring through Proxmox Datacenter Manager (PDM).
+A native Android app for monitoring and managing Proxmox VE (PVE) hosts and guests, with multi-cluster fleet monitoring and guest power controls through Proxmox Datacenter Manager (PDM).
 
 **Android 8.0+ · GPL-3.0-or-later · Early alpha**
 
 ## Download
 
-**Latest published version: [v0.1.1-alpha](https://github.com/CrashxZ/pve-pocket/releases/tag/v0.1.1-alpha)** — includes the PDM HttpOnly-cookie login fix.
+**Latest published version: [v0.1.3-alpha](https://github.com/CrashxZ/pve-pocket/releases/tag/v0.1.3-alpha)** — includes PDM VM/LXC power management (Start, Graceful Shutdown, Force Stop), storage backend status enrichment, radial fleet gauges, and security fixes.
 
-- **[Download the Android APK](https://github.com/CrashxZ/pve-pocket/releases/download/v0.1.1-alpha/pve-pocket-v0.1.1-alpha.apk)**
-- [Release notes and checksum](https://github.com/CrashxZ/pve-pocket/releases/tag/v0.1.1-alpha) · [All releases](https://github.com/CrashxZ/pve-pocket/releases) · [Changelog](CHANGELOG.md)
+- **[Download the Android APK](https://github.com/CrashxZ/pve-pocket/releases/download/v0.1.3-alpha/pve-pocket-v0.1.3-alpha.apk)**
+- [Release notes and checksum](https://github.com/CrashxZ/pve-pocket/releases/tag/v0.1.3-alpha) · [All releases](https://github.com/CrashxZ/pve-pocket/releases) · [Changelog](CHANGELOG.md)
 
-This is a **debug-signed test release**, not a production-ready client. The [0.1.2 UI follow-up](docs/ROADMAP.md) is in development and is **not included** in this download.
+This is a **debug-signed test release**, not a production-ready client. See the [project roadmap](docs/ROADMAP.md) for future milestones.
 
 ## Screenshots
 
-Real Android captures of **v0.1.1-alpha** connected to a live PDM deployment; system bars are cropped. These show the released app, not UI mockups.
+Real Android captures of **v0.1.3-alpha** connected to a live PDM deployment; system bars are cropped. These show the released app, not UI mockups.
 
 <table>
   <tr>
-    <td align="center"><img src="docs/screenshots/overview.png" width="260" alt="PDM fleet overview with host and guest summaries"><br><strong>Overview</strong></td>
-    <td align="center"><img src="docs/screenshots/hosts.png" width="260" alt="PDM hosts list with CPU and memory meters"><br><strong>Hosts</strong></td>
+    <td align="center"><img src="docs/screenshots/overview.png" width="260" alt="PDM fleet overview with radial CPU and memory gauges"><br><strong>Overview</strong></td>
+    <td align="center"><img src="docs/screenshots/hosts.png" width="260" alt="PDM hosts list with online status and scannable host labels"><br><strong>Hosts</strong></td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/screenshots/guests.png" width="260" alt="PDM inventory of QEMU virtual machines and LXC containers"><br><strong>Guests</strong></td>
-    <td align="center"><img src="docs/screenshots/node-detail.png" width="260" alt="PDM node details and configured storage pools"><br><strong>Node and storage</strong></td>
+    <td align="center"><img src="docs/screenshots/guests.png" width="260" alt="PDM inventory of QEMU virtual machines and LXC containers with power controls"><br><strong>Guests</strong></td>
+    <td align="center"><img src="docs/screenshots/node-detail.png" width="260" alt="PDM node details and enriched storage pools"><br><strong>Node and storage</strong></td>
   </tr>
 </table>
 
@@ -33,10 +33,10 @@ Real Android captures of **v0.1.1-alpha** connected to a live PDM deployment; sy
 | Capability | Direct PVE connection | PDM connection |
 | --- | --- | --- |
 | Endpoint | PVE API, usually port `8006` | PDM API, usually port `8443` |
-| Inventory | Hosts, QEMU VMs and LXC containers | Read-only inventory across remotes |
-| Monitoring | CPU, memory, uptime and storage, subject to API permissions | Available fleet/node/guest metrics; some fields are missing |
-| Guest power actions | Start, stop and reboot, subject to permissions | **Unsupported; disabled** |
-| Shell and console | External SSH only when a target can be verified; browser fallback opens the management UI | **No remote shell or power routing**; management UI browser fallback only |
+| Inventory | Hosts, QEMU VMs and LXC containers | Multi-cluster inventory across remotes |
+| Monitoring | CPU, memory, uptime and storage, subject to API permissions | Fleet/node/guest metrics; radial fleet CPU/RAM gauges; storage status enrichment (`dir`, `lvm`, `lvmthin`, `zfspool`, `nfs`) with fallback |
+| Guest power actions | Start, stop and reboot, subject to permissions | **Start, graceful shutdown, and force stop** with confirmation dialogs, client-side resource guard, and task polling. **Reboot is unsupported upstream by the PDM API** (no synthetic reboot) |
+| Shell and console | External SSH only when a target can be verified; browser fallback opens the management UI | **No remote shell or console routing**; management UI browser fallback only |
 
 Built-in interactive terminal streaming is **not supported** on either backend. The browser fallback is not a selected guest's console.
 
@@ -44,20 +44,21 @@ The app uses native Android views without an embedded WebView dependency. Creden
 
 ## Install and connect
 
-1. Download the release APK above and compare its SHA-256 with the release notes.
+1. Download the release APK above and compare its SHA-256 (`077e5ca653392c73ebf6b3f82540a78d0e69df30ba2ac218447c87a6cf6ae234`) with the release notes.
 2. Open it on Android 8.0 or newer and allow installation from that source when prompted.
 3. Add your PVE or PDM endpoint and credentials. Use a reachable trusted network or VPN, grant only the permissions you need, and verify the server certificate fingerprint through a trusted channel.
-4. Select the connection to browse hosts and guests. Use a direct PVE connection for supported guest power actions; PDM mode is read-only.
+4. Select the connection to browse hosts and guests and perform supported power actions. Direct PVE connections support start, stop, and reboot. PDM connections support start, graceful shutdown, and force stop (reboot is unsupported upstream).
 
-The published v0.1.1 APK uses the same signing certificate as v0.1.0 and can upgrade that release. Locally built and GitHub Actions APKs may use different debug keys and cannot necessarily replace an existing install. The application ID remains `com.homelabpocket` for upgrade continuity.
+The published v0.1.3 APK uses the same signing certificate as older releases (v0.1.0/v0.1.1/v0.1.2) and can upgrade an existing install. Local builds may use different debug keys; CI keys are ephemeral, and neither can replace an existing install. The application ID remains `com.homelabpocket` for upgrade continuity.
 
 ## Alpha limitations
 
-- **Incomplete device coverage:** user-provided phone screenshots confirm live PDM login and inventory, not comprehensive device acceptance or live PVE power-action qualification. Automated JVM tests are not device tests.
-- **Missing PDM metrics:** root filesystem, disk/network rates and storage types may display `?`, a zero placeholder or `UNKNOWN`. A missing value does **not** mean zero usage. Root filesystem usage is distinct from configured datastore capacity.
-- **Unpolished UI:** composite remote/node names, unavailable-action buttons and refresh styling remain visible in v0.1.1. See the [unreleased UI roadmap](docs/ROADMAP.md).
-- **Storage errors:** configuration and credentials span separate preference files. Saves are not crash-atomic, and rollback is not guaranteed if recovery writes fail. Review saved endpoints after a storage error before reconnecting.
-- **Debug signing:** this alpha and CI builds are for testing. Production release signing is not configured in the default workflow.
+- **Incomplete device coverage:** user-provided phone screenshots confirm phone UI layout and live inventory on a live PDM deployment, not comprehensive device lifecycle, Keystore, biometric, or live power-action execution. Automated JVM tests are not device tests. Testing was conducted without live power mutation requests.
+- **Power action concurrency & tracking:** Concurrency guard (`ActionGuard`) only holds during client tracking, not necessarily server-side completion. Cancel stops client tracking, not an already-dispatched server operation. Timeout/network failure may leave the outcome unknown; verify guest/task state before submitting another action.
+- **Upstream reboot limitation:** PDM guest reboot is not supported by upstream Proxmox Datacenter Manager API routes. PDM mode provides Start, Graceful Shutdown, and Force Stop only; the app honestly surfaces this limitation rather than attempting unsafe or synthetic reboots.
+- **Storage backend status & metrics:** storage backend status enrichment queries upstream `/nodes/{node}/storage/{storage}/status` with a bounded cache; missing/unsupported metrics, HTTP 403, or older PDM versions fall back to `Unavailable` or `?`. Missing metrics are distinct from zero usage. UNKNOWN guest/node states are handled safely.
+- **Storage errors:** configuration and credentials span separate preference files. Saves are not crash-atomic across files, and rollback is not guaranteed if recovery writes fail. Review saved endpoints after a storage error before reconnecting.
+- **Debug signing:** this alpha and CI builds are for testing. Production release signing is not configured in the default workflow. Local builds may use different debug keys; CI keys are ephemeral and will not upgrade release APKs.
 
 See [verification and signing details](VERIFICATION.md) for version-scoped evidence and [SECURITY.md](SECURITY.md) for security reporting.
 
@@ -69,7 +70,7 @@ The project uses a shell build pipeline, not a Gradle wrapper. Clone the reposit
 git clone https://github.com/CrashxZ/pve-pocket.git
 cd pve-pocket
 # Optional: build the published release instead of current main.
-git checkout v0.1.1-alpha
+git checkout v0.1.3-alpha
 ```
 
 ### Ubuntu / Debian x86_64
@@ -97,11 +98,11 @@ source tools/env.sh
 bash tools/build.sh
 ```
 
-Both paths compile the app, run the JVM behavioral suite, package and sign **`artifacts/pve-pocket-debug.apk`**. Fresh ARM64 bootstrap downloads were not re-qualified for v0.1.1; see [verification details](VERIFICATION.md). Build outputs and signing keys must not be committed.
+Both paths compile the app, run the JVM behavioral suite, package and sign **`artifacts/pve-pocket-debug.apk`**. Build outputs and signing keys must not be committed.
 
 ## Roadmap
 
-The next focus is [0.1.2 UI polish](docs/ROADMAP.md): clearer missing-metric states, readable remote/node names, less clutter in PDM mode, and consistent controls. This is development work, **not a published release or a promise of new PDM management support**.
+See the [Roadmap](docs/ROADMAP.md) for recent shipped capabilities and future milestone priorities, including storage atomicity, widget support, and external console routing investigations.
 
 [Report a bug or request a feature](https://github.com/CrashxZ/pve-pocket/issues). Do not include credentials, private keys or sensitive server details.
 
