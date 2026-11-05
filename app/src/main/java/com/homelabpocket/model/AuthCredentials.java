@@ -116,6 +116,31 @@ public class AuthCredentials {
         return null;
     }
 
+    /**
+     * Extracts and returns the raw ticket string without any cookie prefix.
+     */
+    public String getRawTicketValue() {
+        if (secretValue == null) return null;
+        String val = secretValue.trim();
+        if (val.toLowerCase().startsWith("cookie:")) {
+            val = val.substring(7).trim();
+        }
+        if (val.startsWith("__Host-PDMAuthCookie=")) {
+            return val.substring(21).trim();
+        } else if (val.startsWith("__Host-PVEAuthCookie=")) {
+            return val.substring(21).trim();
+        } else if (val.startsWith("PDMAuthCookie=")) {
+            return val.substring(14).trim();
+        } else if (val.startsWith("PDMAUTHCOOKIE=")) {
+            return val.substring(14).trim();
+        } else if (val.startsWith("PVEAuthCookie=")) {
+            return val.substring(14).trim();
+        } else if (val.startsWith("PDMCookie=")) {
+            return val.substring(10).trim();
+        }
+        return val;
+    }
+
     /** Returns the cookie value for ticket-based auth for PVE (default) */
     public String getTicketCookieValue() {
         return getTicketCookieValue(ServerConfig.ServerType.PVE);
@@ -123,27 +148,18 @@ public class AuthCredentials {
 
     /**
      * Returns the cookie value for ticket-based auth.
-     * Automatically applies "PVEAuthCookie=" or "PDMAUTHCOOKIE=" prefix depending on server type.
+     * Applies exact upstream cookie prefix: "__Host-PDMAuthCookie=" (or "PDMAuthCookie=") for PDM,
+     * "PVEAuthCookie=" for PVE.
      */
     public String getTicketCookieValue(ServerConfig.ServerType type) {
         if (authType == AuthType.TICKET) {
-            if (secretValue == null) return null;
-            String val = secretValue.trim();
-            if (val.toLowerCase().startsWith("cookie:")) {
-                val = val.substring(7).trim();
-            }
-
-            String rawTicket = val;
-            if (rawTicket.startsWith("PVEAuthCookie=")) {
-                rawTicket = rawTicket.substring(14).trim();
-            } else if (rawTicket.startsWith("PDMAUTHCOOKIE=")) {
-                rawTicket = rawTicket.substring(14).trim();
-            } else if (rawTicket.startsWith("PDMCookie=")) {
-                rawTicket = rawTicket.substring(10).trim();
-            }
-
+            String rawTicket = getRawTicketValue();
+            if (rawTicket == null) return null;
             if (type == ServerConfig.ServerType.PDM) {
-                return "PDMAUTHCOOKIE=" + rawTicket;
+                if (secretValue != null && secretValue.trim().startsWith("PDMAuthCookie=")) {
+                    return "PDMAuthCookie=" + rawTicket;
+                }
+                return "__Host-PDMAuthCookie=" + rawTicket;
             } else {
                 return "PVEAuthCookie=" + rawTicket;
             }

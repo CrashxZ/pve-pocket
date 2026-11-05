@@ -104,12 +104,20 @@ public class JsonUtil {
      */
     public static String sanitizeForLog(String input) {
         if (input == null) return null;
-        // Redact PVEAuthCookie and similar patterns
+        // Redact PVE and PDM credentials, auth cookies, tokens, and ticket-info
         return input
+            .replaceAll("__Host-PDMAuthCookie=[^;\\s&]+", "__Host-PDMAuthCookie=REDACTED")
+            .replaceAll("PDMAuthCookie=[^;\\s&]+", "PDMAuthCookie=REDACTED")
+            .replaceAll("PDMAUTHCOOKIE=[^;\\s&]+", "PDMAUTHCOOKIE=REDACTED")
+            .replaceAll("PDMCookie=[^;\\s&]+", "PDMCookie=REDACTED")
             .replaceAll("PVEAuthCookie=[^;\\s&]+", "PVEAuthCookie=REDACTED")
+            .replaceAll("PDMAPIToken=[^\\s]+", "PDMAPIToken=REDACTED")
             .replaceAll("PVEAPIToken=[^\\s]+", "PVEAPIToken=REDACTED")
             .replaceAll("CSRFPreventionToken:[^\\r\\n]+", "CSRFPreventionToken:REDACTED")
             .replaceAll("\"ticket\"\\s*:\\s*\"[^\"]+\"", "\"ticket\":\"REDACTED\"")
+            .replaceAll("\"ticket-info\"\\s*:\\s*\"[^\"]+\"", "\"ticket-info\":\"REDACTED\"")
+            .replaceAll("\"ticket_info\"\\s*:\\s*\"[^\"]+\"", "\"ticket_info\":\"REDACTED\"")
+            .replaceAll("\"CSRFPreventionToken\"\\s*:\\s*\"[^\"]+\"", "\"CSRFPreventionToken\":\"REDACTED\"")
             .replaceAll("\"password\"\\s*:\\s*\"[^\"]+\"", "\"password\":\"REDACTED\"");
     }
 }

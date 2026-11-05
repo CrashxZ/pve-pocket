@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.1-alpha] - 2026-11-04
+
+### Fixed
+- **Proxmox Datacenter Manager (PDM) Password Authentication & HttpOnly Cookie Handling**:
+  - Resolved `Failed to parse ticket response: No value for ticket` error during PDM password authentication by conforming to upstream Proxmox schema (`proxmox-auth-api` `API_METHOD_CREATE_TICKET_HTTP_ONLY`).
+  - Added extraction of authentication tickets from response `Set-Cookie` headers (`__Host-PDMAuthCookie`, `PDMAuthCookie`) when `ticket-info` is returned in JSON payload and `data.ticket` is omitted by PDM for HttpOnly cookie protection.
+  - Enforced exact upstream cookie header formatting on PDM followup requests (`__Host-PDMAuthCookie=<ticket>`) ensuring strict case-sensitive server acceptance and RFC 6265 boundary enforcement without multi-cookie injection or uppercase aliases.
+  - Hardened ticket parser fail-closed behavior for TFA/MFA challenges (`NeedTFA: 1`, `!tfa!`, and `CSRFPreventionToken: "invalid"`), malformed JSON payloads, and missing credentials.
+  - Secured followup requests: `ApiClient` enforces explicit credential passing, refuses automatic HTTP 3xx redirects on credential-bearing endpoints to prevent credential leakage to third-party sinks, and returns fixed static error descriptions for HTTP 4xx/5xx responses to prevent server reflection of sensitive error bodies.
+  - Hardened credential redaction: `JsonUtil.sanitizeForLog` adds redaction coverage for PDM API tokens (`PDMAPIToken`), PDM cookies (`__Host-PDMAuthCookie`, `PDMAuthCookie`, `PDMAUTHCOOKIE`, `PDMCookie`), and payload fields (`ticket-info`, `ticket_info`) in diagnostics and logging.
+  - Expanded automated test suite: 184 passing behavioral tests, including `PdmUpstreamAuthRegressionTest` (covering upstream HttpOnly ticket extraction, strict cookie scopes, TFA refusal, non-disclosure on HTTP 400, and HTTP 302 redirect refusal) and transactional preference save tests.
+  - Updated application versioning: `versionName="0.1.1-alpha"`, `versionCode="4"`.
+  - Scope Note: This release strictly addresses PDM authentication and security hardening; pending UI polish and layout enhancements are intentionally deferred to future releases.
+
 ## [0.1.0-alpha] - 2026-11-04
 
 ### Added

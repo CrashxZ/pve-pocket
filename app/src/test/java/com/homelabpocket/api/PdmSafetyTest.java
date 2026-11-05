@@ -125,9 +125,9 @@ public class PdmSafetyTest {
             // Verify Authorization or Cookie header
             String authHeader = exchange.getRequestHeaders().getFirst("Authorization");
             String cookieHeader = exchange.getRequestHeaders().getFirst("Cookie");
-            assertTrue("Request must supply PDMAPIToken or PDMAUTHCOOKIE",
+            assertTrue("Request must supply PDMAPIToken or PDM auth cookie",
                     (authHeader != null && authHeader.contains("PDMAPIToken")) ||
-                    (cookieHeader != null && cookieHeader.contains("PDMAUTHCOOKIE")));
+                    (cookieHeader != null && (cookieHeader.contains("__Host-PDMAuthCookie") || cookieHeader.contains("PDMAuthCookie"))));
 
             String resp = "{\"data\":[" +
                     "{\"name\":\"cluster-west\",\"type\":\"pve\",\"url\":\"https://192.0.2.10:8006\",\"fingerprint\":\"AA:BB...\"}," +
@@ -339,7 +339,7 @@ public class PdmSafetyTest {
         String pveCookie = ticketCreds.getTicketCookieValue(ServerConfig.ServerType.PVE);
         String pdmCookie = ticketCreds.getTicketCookieValue(ServerConfig.ServerType.PDM);
         assertEquals("PVEAuthCookie=PDM:ticket123", pveCookie);
-        assertEquals("PDMAUTHCOOKIE=PDM:ticket123", pdmCookie);
+        assertEquals("__Host-PDMAuthCookie=PDM:ticket123", pdmCookie);
     }
 
     @Test
@@ -369,7 +369,7 @@ public class PdmSafetyTest {
         AuthCredentials creds = driver.authenticate("root", "secretpass");
         assertNotNull(creds);
         assertEquals("root@pam", creds.username);
-        assertEquals("PDMAUTHCOOKIE=PDM:root@pam:654321::signature123", creds.getTicketCookieValue(ServerConfig.ServerType.PDM));
+        assertEquals("__Host-PDMAuthCookie=PDM:root@pam:654321::signature123", creds.getTicketCookieValue(ServerConfig.ServerType.PDM));
         assertEquals("csrf-pdm-token-999", creds.csrfToken);
         assertFalse(creds.isExpired());
 

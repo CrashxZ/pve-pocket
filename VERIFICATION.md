@@ -1,4 +1,35 @@
-# v0.1.0-alpha verification
+# v0.1.1-alpha verification
+
+## Independently exercised for this release
+
+- Frozen source-only release snapshot reviewed separately from the UI development candidate. Application and test changes were authored by Antigravity with controller review; factual verification disclosures were corrected during release review.
+- Isolated ARM64 build passed resource compilation, Java compilation, **184 JVM behavioral tests**, D8, APK packaging, alignment and signature verification.
+- Independently recompiled and reran the **8 unchanged controller probes**: backend cookie boundaries, cookie-name case, first-pair parsing, partial-TFA refusal, encoded delimiters, reflected HTTP errors and redirects. **8 passed**.
+- The full suite includes four authenticated ticket/token HTTP 400 and redirect-refusal tests using the corrected relative `/remotes` path. The real loopback HTTPS handlers are reached.
+- All application/build inputs in the publication tree match the independently exercised source snapshot. Only documentation differs. The four README images are actual user-provided phone captures, with status/navigation bars cropped; visible hostnames were approved. No visible IP addresses or credentials were found during independent visual review.
+
+## Released APK
+
+- Filename: `pve-pocket-v0.1.1-alpha.apk`
+- Application ID: `com.homelabpocket`
+- Version: `0.1.1-alpha`, versionCode `4`
+- Minimum Android API: `26`; target API: `29`
+- Size: **150435 bytes**
+- SHA-256: `7760163c345b8a8413b70be8444192adc1373ac2233a1d9a8b557366f2f55d2d`
+- APK Signature Scheme v2 and v3 verified. Signing certificate SHA-256: `869037568e2aabf3b1030d21fc08ed331d4732f3387929504d1b2e3b38ebae5e`, independently matched to the previously released v0.1.0-alpha APK for upgrade compatibility.
+- This is a debug-signed alpha. GitHub Actions uses an ephemeral CI signing key; its artifact is not the upgrade APK. The separate controller rebuild also passed; archive timestamps can change its file hash, so the release hash above identifies the exact selected Pi-built artifact.
+- Current-release Ubuntu/JDK 17 GitHub Actions evidence is available in the repository's [Actions history](https://github.com/CrashxZ/pve-pocket/actions). Its status must be checked independently; ARM64 success alone does not establish Ubuntu success.
+
+## Limits
+
+- User-provided phone screenshots confirm PDM login and read-only inventory against a live deployment. They do not establish comprehensive Android activity, Keystore, biometric or power-action acceptance.
+- PDM power actions, shell streaming and built-in terminal streaming remain unsupported. Missing PDM rootfs/rate/type values remain visibly incomplete in this version; UI work belongs to the separate unreleased 0.1.2-alpha candidate.
+- Preference rollback remains in-process, not a crash-atomic multi-file transaction. Fresh toolchain bootstrap was not exercised for this release.
+- Fixed HTTP-error descriptions and redirect refusal were behaviorally tested. Logging redaction is defense-in-depth, not a guarantee for arbitrary adversarial JSON text; escaped JSON strings need further hardening. The logging helper has no current production callers.
+
+---
+
+# Historical v0.1.0-alpha verification
 
 ## Independently exercised
 

@@ -157,8 +157,18 @@ public class ApiClient {
         return executeRequest(path, "POST", formBody, auth, remainingBudgetMs);
     }
 
+    private static class ResponseData {
+        final String body;
+        final java.util.List<String> setCookieHeaders;
+
+        ResponseData(String body, java.util.List<String> setCookieHeaders) {
+            this.body = body;
+            this.setCookieHeaders = setCookieHeaders;
+        }
+    }
+
     /**
-     * POST to /access/ticket to obtain a short-lived PVE ticket with default timeout.
+     * POST to /access/ticket to obtain a short-lived PVE/PDM ticket with default timeout.
      * Password is used only here and NOT stored after this call.
      */
     public AuthCredentials authenticate(String username, String password)
@@ -167,18 +177,25 @@ public class ApiClient {
     }
 
     /**
-     * POST to /access/ticket to obtain a short-lived PVE ticket with explicit remaining budget limit.
+     * POST to /access/ticket to obtain a short-lived PVE/PDM ticket with explicit remaining budget limit.
      * Password is used only here and NOT stored after this call.
      */
     public AuthCredentials authenticate(String username, String password, long remainingBudgetMs)
             throws ApiException, IOException {
-        long budget = (remainingBudgetMs > 0) ? remainingBudgetMs : 15_000L;
+        if (remainingBudgetMs <= 0) {
+            throw new ApiException(0, "Request deadline already expired before dispatch (" + remainingBudgetMs + "ms remaining)");
+        }
         String cleanUser = (username != null) ? username.trim() : "";
         String authUser = (!cleanUser.contains("@") && !cleanUser.isEmpty()) ? (cleanUser + "@pam") : cleanUser;
         String formBody = "username=" + urlEncode(authUser)
                 + "&password=" + urlEncode(password != null ? password : "");
-        String response = executeRequest("/access/ticket", "POST", formBody, null, budget);
-        return parseTicketResponse(response);
+        ResponseData resp = executeRequestInternal("/access/ticket", "POST", formBody, null, remainingBudgetMs);
+        return parseTicketResponse(resp.body, resp.setCookieHeaders);
+    }
+
+    private String executeRequest(String path, String method, String formBody, AuthCredentials auth, long budgetMs)
+            throws ApiException, IOException {
+        return executeRequestInternal(path, method, formBody, auth, budgetMs).body;
     }
 
     /**
@@ -192,7 +209,7 @@ public class ApiClient {
      * - Chunked body reading with monotonic clock checks and bounded response size.
      * - Guaranteed cleanup of connection and watchdog cancellation in finally.
      */
-    private String executeRequest(String path, String method, String formBody, AuthCredentials auth, long budgetMs)
+    private ResponseData executeRequestInternal(String path, String method, String formBody, AuthCredentials auth, long budgetMs)
             throws ApiException, IOException {
 
         if (budgetMs <= 0) {
@@ -265,12 +282,19 @@ public class ApiClient {
 
             int code = conn.getResponseCode();
 
+            // Collect Set-Cookie headers for authentication ticket extraction (PDM HttpOnly cookie support)
+            java.util.List<String> setCookies = new java.util.ArrayList<>();
+            if (conn.getHeaderFields() != null) {
+                for (java.util.Map.Entry<String, java.util.List<String>> entry : conn.getHeaderFields().entrySet()) {
+                    if (entry.getKey() != null && entry.getKey().equalsIgnoreCase("Set-Cookie") && entry.getValue() != null) {
+                        setCookies.addAll(entry.getValue());
+                    }
+                }
+            }
+
             // Refuse automatic redirects on credential-bearing traffic to prevent forwarding credentials to other origins
             if (code >= 300 && code < 400) {
-                String location = conn.getHeaderField("Location");
-                throw new ApiException(code, "HTTP redirect (" + code + " to " +
-                        (location != null ? location : "other origin") +
-                        ") blocked: Automatic redirects disabled on credential-bearing requests to prevent credential leakage.");
+                throw new ApiException(code, "HTTP redirect (" + code + ") blocked: Automatic redirects disabled on credential-bearing requests to prevent credential leakage.");
             }
 
             // Phase 4: Response Body Streaming with Monotonic Deadline & Bounded Size
@@ -280,7 +304,12 @@ public class ApiClient {
             } else {
                 stream = conn.getErrorStream();
                 if (stream == null) {
-                    throw new ApiException(code, "HTTP " + code + " with no error body");
+                    if (code == 401) {
+                        throw new ApiException(401, "Authentication failed or token expired. Please re-authenticate.");
+                    } else if (code == 403) {
+                        throw new ApiException(403, "Permission denied. Check API token permissions or user roles.");
+                    }
+                    throw new ApiException(code, extractError(null, code));
                 }
             }
 
@@ -316,7 +345,7 @@ public class ApiClient {
                 String msg = extractError(body, code);
                 throw new ApiException(code, msg);
             }
-            return body;
+            return new ResponseData(body, setCookies);
 
         } catch (SocketTimeoutException e) {
             throw new ApiException(0, "Total request deadline exceeded (" + budgetMs + "ms limit): " + e.getMessage());
@@ -335,19 +364,112 @@ public class ApiClient {
         }
     }
 
-    private AuthCredentials parseTicketResponse(String response)
+    private AuthCredentials parseTicketResponse(String response, java.util.List<String> setCookies)
             throws ApiException {
         try {
             JSONObject root = new JSONObject(response);
             JSONObject data = root.getJSONObject("data");
-            String ticket = data.getString("ticket");
-            String csrf = data.getString("CSRFPreventionToken");
+
+            // Check for TFA/MFA challenge state (fail-closed)
+            if (data.optInt("NeedTFA", 0) == 1) {
+                throw new ApiException(0, "Two-factor authentication (TFA) challenge required. Interactive TFA is not supported for background ticket login; please configure an API token instead.");
+            }
+            String csrf = data.optString("CSRFPreventionToken", null);
+            if ("invalid".equals(csrf)) {
+                throw new ApiException(0, "Two-factor authentication (TFA) challenge required. Interactive TFA is not supported for background ticket login; please configure an API token instead.");
+            }
+
             String username = data.optString("username", "");
+            String ticket = null;
+
+            // 1. Try body ticket (standard PVE format or legacy/non-HttpOnly PDM)
+            if (data.has("ticket") && !data.isNull("ticket")) {
+                String candidate = data.getString("ticket").trim();
+                if (!candidate.isEmpty()) {
+                    ticket = candidate;
+                }
+            }
+
+            // 2. If ticket is absent from body (upstream PDM with HttpOnly cookie schema):
+            // Extract ticket from Set-Cookie headers
+            if (ticket == null && setCookies != null && !setCookies.isEmpty()) {
+                ticket = extractTicketFromCookies(setCookies, config.type);
+            }
+
+            // Fail closed for TFA regardless of source
+            if (ticket != null && ticket.contains("!tfa!")) {
+                throw new ApiException(0, "Two-factor authentication (TFA) challenge required. Interactive TFA is not supported for background ticket login; please configure an API token instead.");
+            }
+
+            if (ticket == null) {
+                if (data.has("ticket-info") || data.has("ticket_info")) {
+                    throw new ApiException(0, "Failed to parse ticket response: PDM returned ticket-info but no authentication ticket cookie in Set-Cookie header");
+                }
+                throw new ApiException(0, "Failed to parse ticket response: No value for ticket");
+            }
+
+            if (csrf == null || csrf.trim().isEmpty()) {
+                throw new ApiException(0, "Failed to parse ticket response: Missing CSRFPreventionToken");
+            }
+
             long expiresAt = System.currentTimeMillis() + TimeUnit.HOURS.toMillis(2);
             return AuthCredentials.ticket(username, ticket, csrf, expiresAt);
         } catch (JSONException e) {
-            throw new ApiException(0, "Failed to parse ticket response: " + e.getMessage());
+            throw new ApiException(0, "Failed to parse ticket response: Invalid JSON structure");
         }
+    }
+
+    private String extractTicketFromCookies(java.util.List<String> setCookies, ServerConfig.ServerType serverType) {
+        if (setCookies == null || setCookies.isEmpty()) {
+            return null;
+        }
+
+        // Backend-specific case-sensitive allowlist, no cross-backend fallback.
+        // Upstream PDM checks __Host-PDMAuthCookie first, then PDMAuthCookie (case-sensitive).
+        // Upstream PVE checks PVEAuthCookie (case-sensitive).
+        String[] allowedNames;
+        if (serverType == ServerConfig.ServerType.PDM) {
+            allowedNames = new String[]{
+                    "__Host-PDMAuthCookie",
+                    "PDMAuthCookie"
+            };
+        } else {
+            allowedNames = new String[]{
+                    "PVEAuthCookie"
+            };
+        }
+
+        for (String targetName : allowedNames) {
+            for (String cookieHeader : setCookies) {
+                String val = extractCookieValue(cookieHeader, targetName);
+                if (val != null && !val.trim().isEmpty()) {
+                    return val.trim();
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static String extractCookieValue(String header, String targetName) {
+        if (header == null) return null;
+        // RFC 6265: Only the first name=value pair before ';' is the cookie.
+        // Subsequent pairs are cookie attributes (Path, Domain, Secure, HttpOnly, etc.)
+        int semi = header.indexOf(';');
+        String cookiePair = (semi >= 0) ? header.substring(0, semi).trim() : header.trim();
+        int eq = cookiePair.indexOf('=');
+        if (eq <= 0) return null;
+        String name = cookiePair.substring(0, eq).trim();
+        // Case-sensitive exact match against backend-specific allowlist
+        if (name.equals(targetName)) {
+            String value = cookiePair.substring(eq + 1).trim();
+            if (value.startsWith("\"") && value.endsWith("\"") && value.length() >= 2) {
+                value = value.substring(1, value.length() - 1).trim();
+            }
+            // Preserve wire bytes; do not percent-decode delimiters or userid characters
+            return value;
+        }
+        return null;
     }
 
     private HttpsURLConnection openConnection(String path) throws IOException, ApiException {
@@ -382,6 +504,7 @@ public class ApiClient {
         if (auth.isApiToken()) {
             conn.setRequestProperty("Authorization", auth.getAuthorizationHeader(config.type));
         } else {
+            // Exact upstream cookie formatting: __Host-PDMAuthCookie for PDM, PVEAuthCookie for PVE
             conn.setRequestProperty("Cookie", auth.getTicketCookieValue(config.type));
             if (auth.csrfToken != null) {
                 conn.setRequestProperty("CSRFPreventionToken", auth.csrfToken);
@@ -390,16 +513,40 @@ public class ApiClient {
     }
 
     private String extractError(String body, int code) {
-        try {
-            JSONObject root = new JSONObject(body);
-            if (root.has("errors")) {
-                return "HTTP " + code + ": " + root.get("errors").toString();
-            }
-            if (root.has("message")) {
-                return "HTTP " + code + ": " + root.getString("message");
-            }
-        } catch (Exception ignored) {}
-        return "HTTP " + code;
+        // Safe fixed HTTP-status descriptions to prevent echoing reflected secrets or arbitrary server text
+        switch (code) {
+            case 400:
+                return "HTTP 400: Bad Request";
+            case 401:
+                return "HTTP 401: Unauthorized";
+            case 403:
+                return "HTTP 403: Forbidden";
+            case 404:
+                return "HTTP 404: Not Found";
+            case 405:
+                return "HTTP 405: Method Not Allowed";
+            case 408:
+                return "HTTP 408: Request Timeout";
+            case 409:
+                return "HTTP 409: Conflict";
+            case 429:
+                return "HTTP 429: Too Many Requests";
+            case 500:
+                return "HTTP 500: Internal Server Error";
+            case 502:
+                return "HTTP 502: Bad Gateway";
+            case 503:
+                return "HTTP 503: Service Unavailable";
+            case 504:
+                return "HTTP 504: Gateway Timeout";
+            default:
+                if (code >= 400 && code < 500) {
+                    return "HTTP " + code + ": Client Error";
+                } else if (code >= 500 && code < 600) {
+                    return "HTTP " + code + ": Server Error";
+                }
+                return "HTTP " + code;
+        }
     }
 
     private static String urlEncode(String s) {

@@ -21,6 +21,7 @@ signing/
 *.key
 
 # Toolchain downloads, extracted debs, and caches
+tools/env.sh
 tools/jdk/
 tools/jdk-*
 tools/android-sdk/
@@ -40,3 +41,4 @@ Thumbs.db
 # Execution logs and transcripts
 *.log
 *.jsonl
+reviews/

@@ -114,7 +114,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="PVE Pocket v0.1.0-alpha (GPL-3.0-or-later)\nInternal Package: com.homelabpocket (legacy namespace preserved for upgrade continuity)\nLocal Keystore Storage • Zero Analytics • Fully Open Source"
+                android:text="PVE Pocket v0.1.1-alpha (GPL-3.0-or-later)\nInternal Package: com.homelabpocket (legacy namespace preserved for upgrade continuity)\nLocal Keystore Storage • Zero Analytics • Fully Open Source"
                 android:textSize="11sp"
                 android:fontFamily="monospace"
                 android:textColor="@color/matrix_text_muted"
