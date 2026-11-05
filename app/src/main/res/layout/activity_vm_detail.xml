@@ -144,8 +144,39 @@
                     android:textColor="@color/matrix_text_secondary" />
             </LinearLayout>
 
+            <!-- PDM Monitoring Notice Card (Visible only when connected via PDM) -->
+            <LinearLayout
+                android:id="@+id/card_pdm_notice"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/bg_card_matrix"
+                android:padding="16dp"
+                android:layout_marginBottom="16dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/pdm_monitoring_only"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/matrix_cyan"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/pdm_monitoring_detail"
+                    android:textSize="12sp"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/matrix_text_secondary" />
+            </LinearLayout>
+
             <!-- Power Controls Card -->
             <LinearLayout
+                android:id="@+id/card_guest_power"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
@@ -219,6 +250,7 @@
 
             <!-- Interactive Console / Shell Card -->
             <LinearLayout
+                android:id="@+id/card_guest_terminal"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"

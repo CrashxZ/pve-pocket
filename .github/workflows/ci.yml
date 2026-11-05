@@ -61,7 +61,7 @@ jobs:
       - name: Upload APK Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pve-pocket-0.1.1-alpha-apk
+          name: pve-pocket-0.1.2-alpha-apk
           path: artifacts/pve-pocket-debug.apk
           if-no-files-found: error
           retention-days: 14

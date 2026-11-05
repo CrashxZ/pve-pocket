@@ -138,6 +138,22 @@
             android:orientation="horizontal"
             android:gravity="center_vertical">
 
+            <!-- PDM Monitoring Notice Badge -->
+            <TextView
+                android:id="@+id/tv_guest_pdm_notice"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/touch_target_min"
+                android:gravity="center_vertical"
+                android:text="@string/pdm_monitoring_only"
+                android:textColor="@color/matrix_cyan"
+                android:background="@drawable/bg_chip_lxc"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:fontFamily="monospace"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:visibility="gone" />
+
             <!-- Start Button -->
             <Button
                 android:id="@+id/btn_guest_start"

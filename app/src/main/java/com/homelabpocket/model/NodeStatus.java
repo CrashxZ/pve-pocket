@@ -100,4 +100,48 @@ public class NodeStatus {
         if (diskTotal <= 0) return 0.0;
         return (double) diskUsed / diskTotal * 100.0;
     }
+
+    /**
+     * Returns the base hostname of the node.
+     * For PDM multi-cluster composite names (e.g. "remote/node"), returns "node".
+     * If no remote prefix exists, returns the full node identifier.
+     */
+    public String getDisplayName() {
+        if (node == null) return "";
+        int slash = node.indexOf('/');
+        return (slash >= 0 && slash < node.length() - 1) ? node.substring(slash + 1) : node;
+    }
+
+    /**
+     * Returns the remote cluster name if prefixed (e.g. "remote" from "remote/node"),
+     * or empty string if standalone.
+     */
+    public String getRemoteName() {
+        if (node == null) return "";
+        int slash = node.indexOf('/');
+        return (slash > 0) ? node.substring(0, slash) : "";
+    }
+
+    /**
+     * Returns true if this node identifier contains a separate remote cluster prefix.
+     */
+    public boolean hasSeparateRemote() {
+        return node != null && node.contains("/") && !getRemoteName().isEmpty();
+    }
+
+    /**
+     * Returns true if rootfs/disk telemetry is actively reported by upstream.
+     * PDM reports -1 for disk and maxdisk, in which case this returns false.
+     */
+    public boolean isDiskReported() {
+        return diskTotal > 0 && diskUsed >= 0;
+    }
+
+    /**
+     * Returns true if network throughput telemetry is actively reported by upstream.
+     * PDM reports -1 for netIn and netOut, in which case this returns false.
+     */
+    public boolean isNetReported() {
+        return netIn >= 0 && netOut >= 0;
+    }
 }

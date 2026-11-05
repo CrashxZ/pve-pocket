@@ -8,7 +8,7 @@ WORKSPACE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$WORKSPACE"
 
 echo "=================================================="
-echo "PVE Pocket — Master Build Pipeline (v0.1.1-alpha)"
+echo "PVE Pocket — Master Build Pipeline (v0.1.2-alpha)"
 echo "=================================================="
 
 # Detect environment: Pi user-local vs Standard Android SDK / CI
@@ -191,7 +191,8 @@ $JAVA_CMD -cp "$TEST_RUN_CP" org.junit.runner.JUnitCore \
   com.homelabpocket.api.EmptyOnboardingTest \
   com.homelabpocket.security.AuthRefreshAndTlsOptionTest \
   com.homelabpocket.security.AddServerActivityTransactionalTest \
-  com.homelabpocket.api.PdmUpstreamAuthRegressionTest
+  com.homelabpocket.api.PdmUpstreamAuthRegressionTest \
+  com.homelabpocket.ui.UiPolishViewModelBindingTest
 
 echo ""
 echo "[5/8] Dexing classes with D8..."

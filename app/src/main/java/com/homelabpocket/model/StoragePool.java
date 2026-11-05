@@ -55,6 +55,10 @@ public class StoragePool {
         return JsonUtil.formatBytes(avail);
     }
 
+    public boolean isTypeReported() {
+        return type != null && !type.trim().isEmpty() && !"unknown".equalsIgnoreCase(type.trim());
+    }
+
     public String getTypeBadge() {
         StringBuilder sb = new StringBuilder();
         sb.append(type.toUpperCase());

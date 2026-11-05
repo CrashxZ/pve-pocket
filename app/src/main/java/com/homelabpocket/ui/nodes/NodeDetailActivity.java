@@ -39,6 +39,7 @@ public class NodeDetailActivity extends Activity {
 
     private String nodeName;
     private String serverId;
+    private ServerConfig server;
 
     private Button btnBack;
     private TextView tvName;
@@ -86,20 +87,35 @@ public class NodeDetailActivity extends Activity {
         layoutDetailGuests = findViewById(R.id.layout_detail_guests);
 
         btnBack.setOnClickListener(v -> finish());
-        tvName.setText(nodeName != null ? nodeName : "Host Node");
+        if (nodeName != null && nodeName.contains("/")) {
+            int slash = nodeName.indexOf('/');
+            String remote = nodeName.substring(0, slash);
+            String base = nodeName.substring(slash + 1);
+            tvName.setText(base + "\n[Remote: " + remote + "]");
+            tvName.setTextSize(13);
+        } else {
+            tvName.setText(nodeName != null ? nodeName : "Host Node");
+        }
 
-        ServerConfig server = null;
+        server = null;
         try {
             if (HomelabApp.getInstance() != null && HomelabApp.getInstance().getServerConfigStore() != null) {
                 server = HomelabApp.getInstance().getServerConfigStore().findById(serverId);
             }
         } catch (Throwable ignored) {}
 
-        if (server != null && server.type == ServerConfig.ServerType.PDM) {
-            btnShell.setText("Shell Unavailable on PDM");
-            btnShell.setEnabled(false);
-            btnShell.setAlpha(0.4f);
+        TextView tvPdmBadge = findViewById(R.id.tv_detail_pdm_badge);
+        boolean isPdm = com.homelabpocket.ui.UiPresentationPolicy.isPdm(server);
+        if (isPdm) {
+            btnShell.setVisibility(View.GONE);
+            if (tvPdmBadge != null) {
+                tvPdmBadge.setVisibility(View.VISIBLE);
+            }
         } else {
+            if (tvPdmBadge != null) {
+                tvPdmBadge.setVisibility(View.GONE);
+            }
+            btnShell.setVisibility(View.VISIBLE);
             btnShell.setText("Shell");
             btnShell.setEnabled(true);
             btnShell.setAlpha(1.0f);
@@ -154,10 +170,15 @@ public class NodeDetailActivity extends Activity {
         tvRam.setText("RAM: " + JsonUtil.formatBytes(n.memUsed) + " / " + JsonUtil.formatBytes(n.memTotal));
         progRam.setProgress((int) ramPct);
 
-        int diskPct = n.diskTotal > 0 ? (int) ((n.diskUsed * 100L) / n.diskTotal) : 0;
-        tvDisk.setText("Root FS (/): " + JsonUtil.formatBytes(n.diskUsed) + " / " + JsonUtil.formatBytes(n.diskTotal) + " (" + diskPct + "%)");
+        boolean isPdm = com.homelabpocket.ui.UiPresentationPolicy.isPdm(server);
+        tvDisk.setText(com.homelabpocket.ui.UiPresentationPolicy.formatNodeRootFs(n, isPdm));
         if (progDisk != null) {
-            progDisk.setProgress(diskPct);
+            boolean showBar = com.homelabpocket.ui.UiPresentationPolicy.isRootFsBarVisible(n);
+            progDisk.setVisibility(showBar ? View.VISIBLE : View.GONE);
+            if (showBar) {
+                int diskPct = (int) ((n.diskUsed * 100L) / n.diskTotal);
+                progDisk.setProgress(diskPct);
+            }
         }
 
         tvUptime.setText("Uptime: " + JsonUtil.formatUptime(n.uptime));
@@ -222,6 +243,17 @@ public class NodeDetailActivity extends Activity {
             header.addView(tvBadge);
 
             card.addView(header);
+
+            boolean isPdm = com.homelabpocket.ui.UiPresentationPolicy.isPdm(server);
+            String typeFootnote = com.homelabpocket.ui.UiPresentationPolicy.getStorageTypeFootnote(pool, isPdm);
+            if (typeFootnote != null) {
+                TextView tvTypeNote = new TextView(this);
+                tvTypeNote.setText(typeFootnote);
+                tvTypeNote.setTextColor(getResources().getColor(R.color.matrix_text_muted));
+                tvTypeNote.setTextSize(10);
+                tvTypeNote.setTypeface(android.graphics.Typeface.MONOSPACE);
+                card.addView(tvTypeNote);
+            }
 
             // Row 2: Usage text
             TextView tvUsage = new TextView(this);

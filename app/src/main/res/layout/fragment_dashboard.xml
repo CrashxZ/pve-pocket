@@ -120,58 +120,7 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical">
 
-                <!-- ORIGINAL SIGNATURE ELEMENT: FLEET TOPOLOGY & QUORUM STRIP -->
-                <LinearLayout
-                    android:id="@+id/card_topology_strip"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:background="@drawable/bg_topology_strip"
-                    android:padding="14dp"
-                    android:layout_marginBottom="12dp">
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical">
-
-                        <TextView
-                            android:id="@+id/tv_quorum_badge"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="@string/topology_quorum_ok"
-                            android:textColor="@color/matrix_phosphor"
-                            android:textSize="12sp"
-                            android:textStyle="bold"
-                            android:fontFamily="monospace" />
-
-                        <View
-                            android:layout_width="0dp"
-                            android:layout_height="1dp"
-                            android:layout_weight="1" />
-
-                        <TextView
-                            android:id="@+id/tv_fleet_status"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="2/2 ONLINE"
-                            android:textColor="@color/matrix_text_secondary"
-                            android:textSize="11sp"
-                            android:fontFamily="monospace" />
-                    </LinearLayout>
-
-                    <!-- Segmented Topology Visual Indicators -->
-                    <LinearLayout
-                        android:id="@+id/layout_topology_bars"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:layout_marginTop="8dp" />
-
-                </LinearLayout>
-
-                <!-- FLEET CAPACITY CARD -->
+                <!-- FLEET CAPACITY CARD WITH SIDE-BY-SIDE RADIAL PROGRESS GAUGES -->
                 <LinearLayout
                     android:id="@+id/card_fleet_summary"
                     android:layout_width="match_parent"
@@ -189,126 +138,104 @@
                         android:textStyle="bold"
                         android:fontFamily="monospace"
                         android:textColor="@color/matrix_cyan"
-                        android:layout_marginBottom="8dp" />
+                        android:layout_marginBottom="12dp" />
 
-                    <!-- Fleet CPU -->
+                    <!-- Side-by-side Radial Progress Gauges -->
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:orientation="horizontal"
-                        android:gravity="center_vertical">
-                        <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/fleet_cpu"
-                            android:textSize="12sp"
-                            android:textColor="@color/matrix_text_secondary" />
-                        <TextView
-                            android:id="@+id/tv_fleet_cpu"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="0.0%"
-                            android:textSize="13sp"
-                            android:textStyle="bold"
-                            android:fontFamily="monospace"
-                            android:textColor="@color/matrix_phosphor" />
-                    </LinearLayout>
+                        android:gravity="center_vertical"
+                        android:baselineAligned="false">
 
-                    <ProgressBar
-                        android:id="@+id/progress_fleet_cpu"
-                        style="?android:attr/progressBarStyleHorizontal"
-                        android:layout_width="match_parent"
-                        android:layout_height="@dimen/progress_height"
-                        android:max="100"
-                        android:progress="0"
-                        android:progressTint="@color/matrix_phosphor"
-                        android:layout_marginTop="4dp"
-                        android:layout_marginBottom="10dp" />
-
-                    <!-- Fleet RAM (Physical Pool, No double-counting) -->
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical">
-                        <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/fleet_ram"
-                            android:textSize="12sp"
-                            android:textColor="@color/matrix_text_secondary" />
-                        <TextView
-                            android:id="@+id/tv_fleet_ram"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="0 / 0"
-                            android:textSize="13sp"
-                            android:textStyle="bold"
-                            android:fontFamily="monospace"
-                            android:textColor="@color/matrix_phosphor" />
-                    </LinearLayout>
-
-                    <ProgressBar
-                        android:id="@+id/progress_fleet_ram"
-                        style="?android:attr/progressBarStyleHorizontal"
-                        android:layout_width="match_parent"
-                        android:layout_height="@dimen/progress_height"
-                        android:max="100"
-                        android:progress="0"
-                        android:progressTint="@color/matrix_cyan"
-                        android:layout_marginTop="4dp"
-                        android:layout_marginBottom="10dp" />
-
-                    <!-- Node and Guest Counters -->
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal">
+                        <!-- CPU Radial Gauge Column -->
                         <LinearLayout
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:orientation="vertical">
+                            android:orientation="vertical"
+                            android:gravity="center_horizontal"
+                            android:padding="4dp">
+
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="@string/fleet_nodes"
-                                android:textSize="11sp"
-                                android:textColor="@color/matrix_text_secondary" />
-                            <TextView
-                                android:id="@+id/tv_node_counts"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="—"
-                                android:textSize="13sp"
+                                android:text="@string/fleet_cpu"
+                                android:textSize="12sp"
                                 android:textStyle="bold"
                                 android:fontFamily="monospace"
-                                android:textColor="@color/matrix_text_primary" />
+                                android:textColor="@color/matrix_phosphor"
+                                android:layout_marginBottom="6dp" />
+
+                            <com.homelabpocket.ui.widget.RadialGaugeView
+                                android:id="@+id/gauge_fleet_cpu"
+                                android:layout_width="104dp"
+                                android:layout_height="104dp"
+                                android:layout_gravity="center_horizontal" />
+
+                            <TextView
+                                android:id="@+id/tv_fleet_cpu_capacity"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="—"
+                                android:textSize="11sp"
+                                android:fontFamily="monospace"
+                                android:textColor="@color/matrix_text_secondary"
+                                android:layout_marginTop="6dp"
+                                android:gravity="center_horizontal" />
                         </LinearLayout>
+
+                        <!-- RAM Radial Gauge Column -->
                         <LinearLayout
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:orientation="vertical">
+                            android:orientation="vertical"
+                            android:gravity="center_horizontal"
+                            android:padding="4dp">
+
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="@string/fleet_guests"
-                                android:textSize="11sp"
-                                android:textColor="@color/matrix_text_secondary" />
-                            <TextView
-                                android:id="@+id/tv_guest_counts"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="—"
-                                android:textSize="13sp"
+                                android:text="@string/fleet_ram"
+                                android:textSize="12sp"
                                 android:textStyle="bold"
                                 android:fontFamily="monospace"
-                                android:textColor="@color/matrix_text_primary" />
+                                android:textColor="@color/matrix_cyan"
+                                android:layout_marginBottom="6dp" />
+
+                            <com.homelabpocket.ui.widget.RadialGaugeView
+                                android:id="@+id/gauge_fleet_ram"
+                                android:layout_width="104dp"
+                                android:layout_height="104dp"
+                                android:layout_gravity="center_horizontal" />
+
+                            <TextView
+                                android:id="@+id/tv_fleet_ram_capacity"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="—"
+                                android:textSize="11sp"
+                                android:fontFamily="monospace"
+                                android:textColor="@color/matrix_text_secondary"
+                                android:layout_marginTop="6dp"
+                                android:gravity="center_horizontal" />
                         </LinearLayout>
                     </LinearLayout>
+
+                    <!-- Compact Guest Counts Below Gauges -->
+                    <TextView
+                        android:id="@+id/tv_guest_counts"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="GUESTS: —"
+                        android:textSize="12sp"
+                        android:fontFamily="monospace"
+                        android:textStyle="bold"
+                        android:textColor="@color/matrix_text_primary"
+                        android:gravity="center_horizontal"
+                        android:layout_marginTop="12dp"
+                        android:layout_marginBottom="4dp" />
 
                     <!-- Safe Capacity Disclaimers -->
                     <TextView
@@ -317,48 +244,29 @@
                         android:text="@string/resource_note"
                         android:textSize="10sp"
                         android:textColor="@color/matrix_text_muted"
-                        android:layout_marginTop="8dp" />
+                        android:gravity="center_horizontal"
+                        android:layout_marginTop="4dp" />
                 </LinearLayout>
 
-                <!-- ONLINE NODES SECTION -->
+                <!-- UNIFIED HOSTS SECTION -->
                 <TextView
-                    android:id="@+id/tv_online_header"
+                    android:id="@+id/tv_hosts_header"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="ONLINE HOSTS"
+                    android:text="HOSTS (0 online)"
                     android:textSize="12sp"
                     android:textStyle="bold"
                     android:fontFamily="monospace"
                     android:textColor="@color/matrix_phosphor"
                     android:layout_marginTop="4dp"
-                    android:layout_marginBottom="6dp" />
+                    android:layout_marginBottom="8dp" />
 
+                <!-- Single Hosts List (Offline hosts remain visible) -->
                 <LinearLayout
-                    android:id="@+id/layout_nodes"
+                    android:id="@+id/layout_hosts"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical" />
-
-                <!-- OFFLINE NODES PARTITION (Intentionally powered off hosts) -->
-                <TextView
-                    android:id="@+id/tv_offline_header"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="OFFLINE HOSTS (STANDBY)"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    android:fontFamily="monospace"
-                    android:textColor="@color/matrix_amber"
-                    android:layout_marginTop="12dp"
-                    android:layout_marginBottom="6dp"
-                    android:visibility="gone" />
-
-                <LinearLayout
-                    android:id="@+id/layout_offline_nodes"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:visibility="gone" />
 
                 <!-- Last updated timestamp -->
                 <TextView

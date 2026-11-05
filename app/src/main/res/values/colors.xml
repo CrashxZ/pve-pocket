@@ -17,8 +17,8 @@
 
     <!-- Typography Colors -->
     <color name="matrix_text_primary">#E1EFE6</color>
-    <color name="matrix_text_secondary">#829B8E</color>
-    <color name="matrix_text_muted">#475C51</color>
+    <color name="matrix_text_secondary">#A0BAAF</color>
+    <color name="matrix_text_muted">#738E82</color>
 
     <!-- Theme Aliases for Backward & Component Compatibility -->
     <color name="colorPrimary">#00FF66</color>
@@ -28,14 +28,14 @@
     <color name="card_bg">#121A16</color>
     <color name="bg_offline">#161E1A</color>
     <color name="text_primary">#E1EFE6</color>
-    <color name="text_secondary">#829B8E</color>
-    <color name="text_hint">#475C51</color>
+    <color name="text_secondary">#A0BAAF</color>
+    <color name="text_hint">#738E82</color>
 
     <!-- Status Telemetry Colors -->
     <color name="color_online">#00FF66</color>
     <color name="color_offline">#FFB300</color>
     <color name="color_running">#00FF66</color>
-    <color name="color_stopped">#475C51</color>
+    <color name="color_stopped">#738E82</color>
     <color name="color_warning">#FFB300</color>
     <color name="color_error">#FF3344</color>
     <color name="color_cpu_high">#FF3344</color>

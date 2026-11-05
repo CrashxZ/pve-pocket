@@ -191,7 +191,7 @@ public class GuestsView {
 
         // Name & Identity
         tvName.setText(g.name);
-        tvVmidNode.setText("[" + g.vmid + "] • Host: " + g.node);
+        tvVmidNode.setText(com.homelabpocket.ui.UiPresentationPolicy.formatGuestHostLabel(g));
 
         // Type Badge
         if (g.type == GuestInfo.GuestType.LXC) {
@@ -245,27 +245,22 @@ public class GuestsView {
         });
 
         ServerConfig serverConfig = HomelabApp.getInstance().getServerConfigStore().findById(g.serverId);
-        boolean isPdm = serverConfig != null && serverConfig.type == ServerConfig.ServerType.PDM;
+        boolean isPdm = com.homelabpocket.ui.UiPresentationPolicy.isPdm(serverConfig);
+        TextView tvPdmNotice = card.findViewById(R.id.tv_guest_pdm_notice);
 
         if (isPdm) {
-            btnStart.setEnabled(false);
-            btnStart.setAlpha(0.35f);
-            btnShutdown.setEnabled(false);
-            btnShutdown.setAlpha(0.35f);
-            btnReboot.setEnabled(false);
-            btnReboot.setAlpha(0.35f);
-            btnForceStop.setEnabled(false);
-            btnForceStop.setAlpha(0.35f);
-            btnConsole.setEnabled(false);
-            btnConsole.setAlpha(0.35f);
-            View.OnClickListener pdmDisabledListener = v ->
-                Toast.makeText(activity, "PDM Mode: Guest power actions and terminal streaming are disabled in this release to prevent endpoint misrouting.", Toast.LENGTH_SHORT).show();
-            btnStart.setOnClickListener(pdmDisabledListener);
-            btnShutdown.setOnClickListener(pdmDisabledListener);
-            btnReboot.setOnClickListener(pdmDisabledListener);
-            btnForceStop.setOnClickListener(pdmDisabledListener);
-            btnConsole.setOnClickListener(pdmDisabledListener);
+            btnStart.setVisibility(View.GONE);
+            btnShutdown.setVisibility(View.GONE);
+            btnReboot.setVisibility(View.GONE);
+            btnForceStop.setVisibility(View.GONE);
+            btnConsole.setVisibility(View.GONE);
+            if (tvPdmNotice != null) {
+                tvPdmNotice.setVisibility(View.VISIBLE);
+            }
         } else {
+            if (tvPdmNotice != null) {
+                tvPdmNotice.setVisibility(View.GONE);
+            }
             // Power Actions with double-submit prevention and task polling
             btnStart.setOnClickListener(v -> executePowerAction(g, "start"));
             btnShutdown.setOnClickListener(v -> executePowerAction(g, "shutdown"));

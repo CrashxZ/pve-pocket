@@ -61,7 +61,12 @@ public class NodesView {
         btnRefresh = new Button(activity);
         btnRefresh.setText(R.string.refresh);
         btnRefresh.setTextColor(activity.getResources().getColor(R.color.matrix_phosphor));
-        btnRefresh.setBackgroundResource(android.R.drawable.btn_default);
+        android.util.TypedValue typedValue = new android.util.TypedValue();
+        if (activity.getTheme().resolveAttribute(android.R.attr.selectableItemBackground, typedValue, true)) {
+            btnRefresh.setBackgroundResource(typedValue.resourceId);
+        } else {
+            btnRefresh.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+        }
         btnRefresh.setTextSize(12);
         btnRefresh.setTypeface(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD);
         toolbar.addView(btnRefresh);
@@ -155,6 +160,10 @@ public class NodesView {
     }
 
     private void populateNodeCard(View card, NodeStatus n) {
+        bindNode(card, n);
+    }
+
+    public void bindNode(View card, NodeStatus n) {
         TextView tvName = card.findViewById(R.id.tv_node_name);
         TextView tvStatus = card.findViewById(R.id.tv_node_status);
         TextView tvMeta = card.findViewById(R.id.tv_node_meta);
@@ -166,70 +175,104 @@ public class NodesView {
         ProgressBar progRam = card.findViewById(R.id.progress_ram);
         TextView tvDisk = card.findViewById(R.id.tv_node_disk);
         TextView tvNet = card.findViewById(R.id.tv_node_net);
+        TextView tvPdmBadge = card.findViewById(R.id.tv_node_pdm_badge);
         Button btnShell = card.findViewById(R.id.btn_node_shell);
 
-        tvName.setText(n.node);
+        tvName.setText(n.getDisplayName());
+        tvMeta.setText(com.homelabpocket.ui.UiPresentationPolicy.formatNodeMeta(n));
+
+        ServerConfig nodeServer = null;
+        try {
+            if (HomelabApp.getInstance() != null && HomelabApp.getInstance().getServerConfigStore() != null) {
+                nodeServer = HomelabApp.getInstance().getServerConfigStore().findById(n.serverId);
+            }
+        } catch (Throwable ignored) {}
+
+        boolean isPdm = com.homelabpocket.ui.UiPresentationPolicy.isPdm(nodeServer);
+
+        // PDM shell hide & monitoring badge binding evaluated regardless of online/offline
+        if (isPdm) {
+            if (btnShell != null) {
+                btnShell.setVisibility(View.GONE);
+            }
+            if (tvPdmBadge != null) {
+                tvPdmBadge.setVisibility(View.VISIBLE);
+            }
+        } else {
+            if (tvPdmBadge != null) {
+                tvPdmBadge.setVisibility(View.GONE);
+            }
+            if (btnShell != null) {
+                if (n.isOnline()) {
+                    btnShell.setVisibility(View.VISIBLE);
+                    btnShell.setText("Shell");
+                    btnShell.setEnabled(true);
+                    btnShell.setAlpha(1.0f);
+                    btnShell.setOnClickListener(v -> {
+                        Intent intent = new Intent(activity, TerminalActivity.class);
+                        intent.putExtra(TerminalActivity.EXTRA_NODE, n.node);
+                        intent.putExtra(TerminalActivity.EXTRA_SERVER_ID, n.serverId);
+                        intent.putExtra(TerminalActivity.EXTRA_TYPE, "NODE");
+                        intent.putExtra(TerminalActivity.EXTRA_TITLE, n.node + " (Host Shell)");
+                        activity.startActivity(intent);
+                    });
+                } else {
+                    btnShell.setVisibility(View.GONE);
+                }
+            }
+        }
 
         if (n.isOnline()) {
             tvStatus.setText("ONLINE");
             tvStatus.setBackgroundResource(R.drawable.bg_chip_running);
             tvStatus.setTextColor(activity.getResources().getColor(R.color.matrix_phosphor));
-            tvOfflineMsg.setVisibility(View.GONE);
-            layoutMetrics.setVisibility(View.VISIBLE);
-
-            String uptime = JsonUtil.formatUptime(n.uptime);
-            String ver = n.pveVersion != null ? n.pveVersion : "PVE";
-            tvMeta.setText(ver + " • Up " + uptime);
-
-            int cpuPct = (int) Math.round(!Double.isNaN(n.cpuUsage) ? n.cpuUsage * 100 : 0);
-            tvCpuVal.setText(cpuPct + "% (" + n.cpuCount + " cores)");
-            progCpu.setProgress(cpuPct);
-
-            long ramPct = n.memTotal > 0 ? (n.memUsed * 100 / n.memTotal) : 0;
-            tvRamVal.setText(JsonUtil.formatBytes(n.memUsed) + " / " + JsonUtil.formatBytes(n.memTotal));
-            progRam.setProgress((int) ramPct);
-
-            tvDisk.setText("Disk: " + JsonUtil.formatBytes(n.diskUsed) + " / " + JsonUtil.formatBytes(n.diskTotal));
-            tvNet.setText("Net: ↓" + JsonUtil.formatRate(n.netIn) + " ↑" + JsonUtil.formatRate(n.netOut));
-
-            ServerConfig nodeServer = null;
-            try {
-                if (HomelabApp.getInstance() != null && HomelabApp.getInstance().getServerConfigStore() != null) {
-                    nodeServer = HomelabApp.getInstance().getServerConfigStore().findById(n.serverId);
-                }
-            } catch (Throwable ignored) {}
-
-            if (nodeServer != null && nodeServer.type == ServerConfig.ServerType.PDM) {
-                btnShell.setText("No Shell (PDM)");
-                btnShell.setEnabled(false);
-                btnShell.setAlpha(0.4f);
-            } else {
-                btnShell.setText("Shell");
-                btnShell.setEnabled(true);
-                btnShell.setAlpha(1.0f);
-                btnShell.setOnClickListener(v -> {
-                    Intent intent = new Intent(activity, TerminalActivity.class);
-                    intent.putExtra(TerminalActivity.EXTRA_NODE, n.node);
-                    intent.putExtra(TerminalActivity.EXTRA_SERVER_ID, n.serverId);
-                    intent.putExtra(TerminalActivity.EXTRA_TYPE, "NODE");
-                    intent.putExtra(TerminalActivity.EXTRA_TITLE, n.node + " (Host Shell)");
-                    activity.startActivity(intent);
-                });
+            if (tvOfflineMsg != null) {
+                tvOfflineMsg.setVisibility(View.GONE);
+            }
+            if (layoutMetrics != null) {
+                layoutMetrics.setVisibility(View.VISIBLE);
             }
 
-            card.setOnClickListener(v -> {
-                Intent intent = new Intent(activity, NodeDetailActivity.class);
-                intent.putExtra(NodeDetailActivity.EXTRA_NODE, n.node);
-                intent.putExtra(NodeDetailActivity.EXTRA_SERVER_ID, n.serverId);
-                activity.startActivity(intent);
-            });
+            int cpuPct = (int) Math.round(!Double.isNaN(n.cpuUsage) ? n.cpuUsage * 100 : 0);
+            if (tvCpuVal != null) {
+                tvCpuVal.setText(cpuPct + "% (" + n.cpuCount + " cores)");
+            }
+            if (progCpu != null) {
+                progCpu.setProgress(cpuPct);
+            }
+
+            long ramPct = n.memTotal > 0 ? (n.memUsed * 100 / n.memTotal) : 0;
+            if (tvRamVal != null) {
+                tvRamVal.setText(JsonUtil.formatBytes(n.memUsed) + " / " + JsonUtil.formatBytes(n.memTotal));
+            }
+            if (progRam != null) {
+                progRam.setProgress((int) ramPct);
+            }
+
+            if (tvDisk != null) {
+                tvDisk.setText(com.homelabpocket.ui.UiPresentationPolicy.formatHostDisk(n, isPdm));
+            }
+            if (tvNet != null) {
+                tvNet.setText(com.homelabpocket.ui.UiPresentationPolicy.formatHostNet(n, isPdm));
+            }
         } else {
             tvStatus.setText("OFFLINE");
             tvStatus.setBackgroundResource(R.drawable.bg_chip_stopped);
             tvStatus.setTextColor(activity.getResources().getColor(R.color.matrix_amber));
-            tvMeta.setText("Unreachable / Intentionally powered down");
-            tvOfflineMsg.setVisibility(View.VISIBLE);
-            layoutMetrics.setVisibility(View.GONE);
+            if (tvOfflineMsg != null) {
+                tvOfflineMsg.setVisibility(View.VISIBLE);
+            }
+            if (layoutMetrics != null) {
+                layoutMetrics.setVisibility(View.GONE);
+            }
         }
+
+        // Card navigation preserves full composite internal identity for intent routing
+        card.setOnClickListener(v -> {
+            Intent intent = new Intent(activity, NodeDetailActivity.class);
+            intent.putExtra(NodeDetailActivity.EXTRA_NODE, n.node);
+            intent.putExtra(NodeDetailActivity.EXTRA_SERVER_ID, n.serverId);
+            activity.startActivity(intent);
+        });
     }
 }

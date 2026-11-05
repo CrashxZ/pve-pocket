@@ -162,4 +162,29 @@ public class GuestInfo {
     public boolean supportsTermproxy() {
         return type == GuestType.LXC;
     }
+
+    /**
+     * Returns the base host node name if prefixed with remote cluster (e.g. "node" from "remote/node").
+     */
+    public String getNodeDisplayName() {
+        if (node == null) return "";
+        int slash = node.indexOf('/');
+        return (slash >= 0 && slash < node.length() - 1) ? node.substring(slash + 1) : node;
+    }
+
+    /**
+     * Returns the remote cluster name if prefixed (e.g. "remote" from "remote/node").
+     */
+    public String getNodeRemoteName() {
+        if (node == null) return "";
+        int slash = node.indexOf('/');
+        return (slash > 0) ? node.substring(0, slash) : "";
+    }
+
+    /**
+     * Returns true if this guest's host node contains a remote cluster prefix.
+     */
+    public boolean hasSeparateRemote() {
+        return node != null && node.contains("/") && !getNodeRemoteName().isEmpty();
+    }
 }

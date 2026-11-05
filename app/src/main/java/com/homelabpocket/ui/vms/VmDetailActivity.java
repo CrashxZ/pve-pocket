@@ -79,17 +79,11 @@ public class VmDetailActivity extends Activity {
 
         ServerConfig serverConfig = HomelabApp.getInstance().getServerConfigStore().findById(serverId);
         if (serverConfig != null && serverConfig.type == ServerConfig.ServerType.PDM) {
-            btnStart.setEnabled(false);
-            btnStart.setAlpha(0.4f);
-            btnShutdown.setEnabled(false);
-            btnShutdown.setAlpha(0.4f);
-            btnReboot.setEnabled(false);
-            btnReboot.setAlpha(0.4f);
-            btnForceStop.setEnabled(false);
-            btnForceStop.setAlpha(0.4f);
-            btnTerminal.setEnabled(false);
-            btnTerminal.setAlpha(0.4f);
-            Toast.makeText(this, "PDM Mode: Guest power actions and terminal are disabled to prevent misrouting. Connect directly to host PVE.", Toast.LENGTH_LONG).show();
+            btnStart.setVisibility(View.GONE);
+            btnShutdown.setVisibility(View.GONE);
+            btnReboot.setVisibility(View.GONE);
+            btnForceStop.setVisibility(View.GONE);
+            btnTerminal.setVisibility(View.GONE);
         }
 
         loadData();
@@ -116,7 +110,7 @@ public class VmDetailActivity extends Activity {
 
         btnBack.setOnClickListener(v -> finish());
         tvTitle.setText("Guest [" + vmid + "]");
-        tvIdNode.setText(type.name() + " on " + node);
+        tvIdNode.setText(com.homelabpocket.ui.UiPresentationPolicy.formatVmDetailSubtitle(type != null ? type.name() : "Guest", node));
 
         btnStart.setOnClickListener(v -> executeAction("start"));
         btnShutdown.setOnClickListener(v -> executeAction("shutdown"));
@@ -148,6 +142,14 @@ public class VmDetailActivity extends Activity {
         this.currentGuest = g;
         tvTitle.setText(g.name + " [" + g.vmid + "]");
 
+        ServerConfig serverConfig = null;
+        try {
+            if (HomelabApp.getInstance() != null && HomelabApp.getInstance().getServerConfigStore() != null) {
+                serverConfig = HomelabApp.getInstance().getServerConfigStore().findById(serverId);
+            }
+        } catch (Throwable ignored) {}
+        boolean isPdm = com.homelabpocket.ui.UiPresentationPolicy.isPdm(serverConfig);
+
         boolean isRunning = g.state == GuestInfo.RunState.RUNNING;
         if (isRunning) {
             tvStatus.setText("RUNNING");
@@ -167,7 +169,7 @@ public class VmDetailActivity extends Activity {
             tvRam.setText("RAM: " + JsonUtil.formatBytes(g.memUsed) + " / " + JsonUtil.formatBytes(g.memTotal));
             progRam.setProgress((int) ramPct);
 
-            tvDisk.setText("Disk: " + JsonUtil.formatBytes(g.diskUsed) + " / " + JsonUtil.formatBytes(g.diskTotal));
+            tvDisk.setText(com.homelabpocket.ui.UiPresentationPolicy.formatGuestDisk(g, isPdm));
             tvUptime.setText("Uptime: " + JsonUtil.formatUptime(g.uptime));
         } else {
             tvStatus.setText("STOPPED");
@@ -183,8 +185,27 @@ public class VmDetailActivity extends Activity {
             progCpu.setProgress(0);
             tvRam.setText("RAM: - / " + JsonUtil.formatBytes(g.memTotal));
             progRam.setProgress(0);
-            tvDisk.setText("Disk: - / " + JsonUtil.formatBytes(g.diskTotal));
+            tvDisk.setText(com.homelabpocket.ui.UiPresentationPolicy.formatGuestDisk(g, isPdm));
             tvUptime.setText("State: Powered down");
+        }
+
+        View cardPower = findViewById(R.id.card_guest_power);
+        View cardTerminal = findViewById(R.id.card_guest_terminal);
+        View cardPdmNotice = findViewById(R.id.card_pdm_notice);
+
+        if (isPdm) {
+            btnStart.setVisibility(View.GONE);
+            btnShutdown.setVisibility(View.GONE);
+            btnReboot.setVisibility(View.GONE);
+            btnForceStop.setVisibility(View.GONE);
+            btnTerminal.setVisibility(View.GONE);
+            if (cardPower != null) cardPower.setVisibility(View.GONE);
+            if (cardTerminal != null) cardTerminal.setVisibility(View.GONE);
+            if (cardPdmNotice != null) cardPdmNotice.setVisibility(View.VISIBLE);
+        } else {
+            if (cardPower != null) cardPower.setVisibility(View.VISIBLE);
+            if (cardTerminal != null) cardTerminal.setVisibility(View.VISIBLE);
+            if (cardPdmNotice != null) cardPdmNotice.setVisibility(View.GONE);
         }
     }
 

@@ -10,6 +10,7 @@
         <item name="android:navigationBarColor">@color/matrix_obsidian</item>
         <item name="android:textColorPrimary">@color/matrix_text_primary</item>
         <item name="android:textColorSecondary">@color/matrix_text_secondary</item>
+        <item name="android:textColorHint">@color/matrix_text_muted</item>
     </style>
 
     <style name="AppTheme.Terminal" parent="android:Theme.Material.NoActionBar">

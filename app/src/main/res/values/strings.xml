@@ -131,6 +131,10 @@
     <string name="poll_5m">5 Minutes</string>
     <string name="session_lock">Lock Credential Session</string>
     <string name="pdm_status">PDM Integration Status</string>
+    <string name="pdm_monitoring_only">PDM MONITORING ONLY</string>
+    <string name="pdm_monitoring_badge">PDM MONITORING</string>
+    <string name="pdm_monitoring_detail">Power lifecycle controls and direct terminal shell are disabled on Proxmox Datacenter Manager (PDM) endpoints. Please use the upstream Proxmox VE web console or PDM web interface for direct guest management.</string>
+    <string name="storage_type_not_reported">Type not reported by PDM</string>
 
     <!-- Errors & Feedback -->
     <string name="error_no_credentials">No credentials configured for this host.</string>

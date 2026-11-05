@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Homelab Pocket — Matrix Compact Host Row -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_card_matrix"
+    android:foreground="?android:attr/selectableItemBackground"
+    android:clickable="true"
+    android:focusable="true"
+    android:padding="12dp"
+    android:layout_marginBottom="8dp">
+
+    <!-- Header: Basename + Status Chip (No remote here to prevent crushing basename) -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/tv_node_name"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace"
+            android:textColor="@color/matrix_text_primary" />
+
+        <TextView
+            android:id="@+id/tv_node_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_chip_running"
+            android:textColor="@color/matrix_phosphor"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingTop="3dp"
+            android:paddingBottom="3dp"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace" />
+    </LinearLayout>
+
+    <!-- Separate wrapping Remote label line: preserves cluster context without crushing hostname -->
+    <TextView
+        android:id="@+id/tv_node_remote"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="11sp"
+        android:fontFamily="monospace"
+        android:textColor="@color/matrix_cyan"
+        android:layout_marginTop="3dp"
+        android:visibility="gone" />
+
+    <!-- Compact Telemetry / Standby Metrics -->
+    <TextView
+        android:id="@+id/tv_node_metrics"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="12sp"
+        android:fontFamily="monospace"
+        android:textColor="@color/matrix_text_secondary"
+        android:layout_marginTop="6dp" />
+
+    <!-- Actions (PDM monitoring badge or host shell button) -->
+    <LinearLayout
+        android:id="@+id/layout_node_actions"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="end"
+        android:layout_marginTop="6dp">
+
+        <TextView
+            android:id="@+id/tv_node_pdm_badge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/pdm_monitoring_badge"
+            android:textColor="@color/matrix_cyan"
+            android:background="@drawable/bg_chip_lxc"
+            android:textSize="10sp"
+            android:fontFamily="monospace"
+            android:textStyle="bold"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingTop="3dp"
+            android:paddingBottom="3dp"
+            android:visibility="gone" />
+
+        <Button
+            android:id="@+id/btn_node_shell"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/touch_target_min"
+            android:text="@string/node_terminal"
+            android:background="@drawable/bg_btn_outline"
+            android:textColor="@color/matrix_phosphor"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:visibility="gone" />
+    </LinearLayout>
+
+</LinearLayout>

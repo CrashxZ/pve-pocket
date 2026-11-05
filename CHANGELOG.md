@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.2-alpha] - 2026-11-05
+
+### Changed
+- Replaced the Overview topology strip and linear fleet meters with side-by-side native radial CPU/RAM gauges, compact guest counts, and one compact Hosts list that retains offline hosts.
+- Fleet CPU is weighted by reported host core capacity; RAM totals use host telemetry only, without adding guest allocations. Missing fleet metrics are unavailable rather than synthetic zeroes; gauge percentages are bounded.
+- Separated host basenames from remote-cluster labels while retaining full composite identifiers for navigation and API routing.
+- Labeled unavailable root filesystem, disk, network and storage-driver telemetry, attributing missing values to PDM only for confirmed PDM connections.
+- Replaced unavailable PDM power/console/shell buttons with monitoring notices and badges. PDM remains monitoring-only in this version; power-management work is not included.
+- Increased secondary/muted text contrast, added themed placeholder colors, and replaced the Hosts refresh button's light platform background with a theme-aware background.
+- Added gauge text-sizing and accessibility descriptions, including a short unavailable marker inside the ring.
+- Updated `versionName` to `0.1.2-alpha` and `versionCode` to `5`.
+
+### Verification
+- Independently rebuilt the publication source on ARM64: all **209 JVM tests passed**, followed by resource compilation, D8, APK packaging/alignment and successful APK v2/v3 signature verification.
+- UI tests exercise presentation policies, binding-state models, gauge calculation/text-sizing helpers and XML structure. They do **not** execute Android View inflation, Canvas rendering, TalkBack or device screenshots; those require Android runtime verification.
+- Retained the 0.1.1 PDM HttpOnly authentication repair, credential redaction, redirect refusal, TLS checks and backend PDM action restrictions unchanged.
+- This entry documents source publication, not a new downloadable GitHub Release. The existing 0.1.1-alpha release and version-scoped screenshots remain unchanged.
+
 ## [0.1.1-alpha] - 2026-11-04
 
 ### Fixed
