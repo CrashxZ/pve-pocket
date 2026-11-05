@@ -1,162 +1,112 @@
 # PVE Pocket
 
-> **A native, fail-closed Android client for Proxmox VE and Proxmox Datacenter Manager (PDM).**
+A native Android app for monitoring Proxmox VE (PVE) hosts and guests, with read-only fleet monitoring through Proxmox Datacenter Manager (PDM).
 
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
-[![Release](https://img.shields.io/badge/Release-v0.1.1--alpha-green.svg)](CHANGELOG.md)
-[![Android](https://img.shields.io/badge/Platform-Android%208.0%2B%20(API%2026%2B)-brightgreen.svg)](app/src/main/AndroidManifest.xml)
+**Android 8.0+ · GPL-3.0-or-later · Early alpha**
 
-PVE Pocket provides real-time telemetry, guest instance monitoring, and fleet management for Proxmox Virtual Environment (PVE) and Proxmox Datacenter Manager (PDM). Built with a strict **fail-closed security architecture**, hardware-backed Keystore encryption, and pure native Android views designed to avoid missing system WebView crashes.
+## Download
 
----
+**Latest published version: [v0.1.1-alpha](https://github.com/CrashxZ/pve-pocket/releases/tag/v0.1.1-alpha)** — includes the PDM HttpOnly-cookie login fix.
 
-## 📸 Screenshots (Actual PDM Live Example)
+- **[Download the Android APK](https://github.com/CrashxZ/pve-pocket/releases/download/v0.1.1-alpha/pve-pocket-v0.1.1-alpha.apk)**
+- [Release notes and checksum](https://github.com/CrashxZ/pve-pocket/releases/tag/v0.1.1-alpha) · [All releases](https://github.com/CrashxZ/pve-pocket/releases) · [Changelog](CHANGELOG.md)
 
-The following un-retouched captures demonstrate PVE Pocket v0.1.1-alpha connected live to a dual-node Proxmox Datacenter Manager (PDM) deployment managing two remote PVE nodes (`home-lab` and `home-lab-2`). Status and navigation bars are cropped; no IP addresses or credentials are exposed.
+This is a **debug-signed test release**, not a production-ready client. The [0.1.2 UI follow-up](docs/ROADMAP.md) is in development and is **not included** in this download.
 
-<p align="center">
-  <img src="docs/screenshots/overview.png" width="280" alt="Fleet Overview (PDM Live Example)" />
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="docs/screenshots/hosts.png" width="280" alt="Hosts List (PDM Live Example)" />
-</p>
-<p align="center">
-  <sub><strong>Left:</strong> Fleet Overview aggregating multi-cluster CPU/RAM utilization and online host summaries. <strong>Right:</strong> Hosts List showing per-node resource meters and honest disabled shell triggers.</sub>
-</p>
+## Screenshots
 
-<p align="center">
-  <img src="docs/screenshots/guests.png" width="280" alt="Guests Discovery (PDM Live Example)" />
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="docs/screenshots/node-detail.png" width="280" alt="Node Detail & Storage (PDM Live Example)" />
-</p>
-<p align="center">
-  <sub><strong>Left:</strong> Multi-cluster Guest inventory across LXC containers and QEMU VMs. <strong>Right:</strong> Node Detail rendering hardware telemetry and configured storage datastores.</sub>
-</p>
+Real Android captures of **v0.1.1-alpha** connected to a live PDM deployment; system bars are cropped. These show the released app, not UI mockups.
 
-> [!NOTE]
-> **Honest Metric & Screenshot Disclosures for v0.1.1-alpha:**
-> - **Screenshots are Live v0.1.1-alpha Captures, Not UI Previews:** These screenshots illustrate actual v0.1.1-alpha runtime behavior on an Android device connected to live PDM infrastructure. They do not depict planned UI enhancements.
-> - **Root FS Metric Missing (`? / ? (0%)`):** PDM's upstream `/api2/json/resources/list` and node endpoints do not report host root filesystem metrics; the progress meter currently defaults to unpopulated/0%.
-> - **Unpopulated Host Disk & Network Rates (`Disk: ? / ?`, `Net: ↓?/s ↑?/s`):** PDM does not stream real-time disk or interface bandwidth for remote nodes.
-> - **Storage Pool Type `UNKNOWN`:** PDM storage enumeration omits filesystem driver types (such as `zfspool` or `lvmthin`), rendering `UNKNOWN` type badges.
-> - **Disabled Interactive Controls:** Node shell access (`NO SHELL (PDM)` / `SHELL UNAVAILABLE ON PDM`) and guest power controls are intentionally disabled fail-closed for PDM remotes to avoid speculative misrouting.
-> - **Composite Node Identifiers:** Node headers reflect upstream PDM remote/node identity (e.g., `home-lab/home-lab`).
-> - **Refresh Button Container:** The top refresh control currently displays an un-themed button container in certain views.
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/overview.png" width="260" alt="PDM fleet overview with host and guest summaries"><br><strong>Overview</strong></td>
+    <td align="center"><img src="docs/screenshots/hosts.png" width="260" alt="PDM hosts list with CPU and memory meters"><br><strong>Hosts</strong></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/guests.png" width="260" alt="PDM inventory of QEMU virtual machines and LXC containers"><br><strong>Guests</strong></td>
+    <td align="center"><img src="docs/screenshots/node-detail.png" width="260" alt="PDM node details and configured storage pools"><br><strong>Node and storage</strong></td>
+  </tr>
+</table>
 
----
+## What works
 
-## ✨ Features
+| Capability | Direct PVE connection | PDM connection |
+| --- | --- | --- |
+| Endpoint | PVE API, usually port `8006` | PDM API, usually port `8443` |
+| Inventory | Hosts, QEMU VMs and LXC containers | Read-only inventory across remotes |
+| Monitoring | CPU, memory, uptime and storage, subject to API permissions | Available fleet/node/guest metrics; some fields are missing |
+| Guest power actions | Start, stop and reboot, subject to permissions | **Unsupported; disabled** |
+| Shell and console | External SSH only when a target can be verified; browser fallback opens the management UI | **No remote shell or power routing**; management UI browser fallback only |
 
-- **Fleet Discovery & Multi-Cluster Support**:
-  - Connect directly to standalone **Proxmox VE (PVE)** nodes (port `8006`).
-  - Connect to **Proxmox Datacenter Manager (PDM)** instances (port `8443`) for unified multi-cluster fleet monitoring and resource discovery (`/api2/json/resources/list`).
-  - Remote/node identity preservation across clusters (`{remote}/{node}`).
+Built-in interactive terminal streaming is **not supported** on either backend. The browser fallback is not a selected guest's console.
 
-- **Hardware & Storage Telemetry**:
-  - Node CPU load, core count, RAM allocation, uptime, and release kernel.
-  - **Explicit Storage Pool Accounting**: Root filesystem (`/`) is clearly distinguished from configured datastores (`/nodes/{node}/storage`).
-  - Supports `dir`, `lvm`, `lvmthin`, `zfspool`, and `nfs` pools with used, total, and available capacity.
-  - Avoids double-counting shared network datastores across nodes.
+The app uses native Android views without an embedded WebView dependency. Credentials are encrypted with AES-GCM through Android Keystore; connections support certificate fingerprint pinning and a device-credential/biometric session lock. TLS verification bypass is an explicit per-server opt-in with a persistent warning; leave it disabled. There are no third-party analytics or tracking SDKs.
 
-- **Hosted Guest Instance Tracking**:
-  - Inspect QEMU virtual machines and LXC containers with live and stopped statuses.
-  - Dynamic status indicators with resource utilization meters (CPU & RAM).
-  - Clean state differentiation: loading, offline hosts, permission-denied (403), authentication-expired (401), and zero-guest states with actionable explanations.
+## Install and connect
 
-- **Safe Native Terminal Fallbacks**:
-  - **Zero WebView Dependency**: Eliminates `MissingWebViewPackageException` and XML inflation crashes on devices lacking Google WebView.
-  - **Honest Terminal Routing Decision Engine (`TerminalRoutingDecision`)**: Homelab Pocket never invents IP addresses or synthetic routes. Direct SSH is strictly disabled whenever the target cannot be verified (e.g., PDM remote nodes, LXC/QEMU containers without guest network configuration, and PVE cluster peer nodes differing from the configured API node).
-  - **Explicit Management UI Labeling**: The web console browser fallback is explicitly labeled as opening the configured management endpoint web UI, not the selected guest console.
-  - **Caller Honesty**: In `NodesView` and `NodeDetailActivity`, PDM node shell buttons display `No Shell (PDM)` / `Shell Unavailable on PDM` and are disabled.
+1. Download the release APK above and compare its SHA-256 with the release notes.
+2. Open it on Android 8.0 or newer and allow installation from that source when prompted.
+3. Add your PVE or PDM endpoint and credentials. Use a reachable trusted network or VPN, grant only the permissions you need, and verify the server certificate fingerprint through a trusted channel.
+4. Select the connection to browse hosts and guests. Use a direct PVE connection for supported guest power actions; PDM mode is read-only.
 
-- **Fail-Closed Security Model**:
-  - **Hardware Keystore Encryption**: Stored credentials encrypted with AES-256-GCM via the Android Keystore system.
-  - **Strict TLS Certificate Pinning**: SHA-256 fingerprint validation on every TLS handshake (`PinnedTrustManager`).
-  - **Optional Explicit Per-Server TLS Skip**: Individual opt-in bypass requiring interactive confirmation (default: OFF). Persistently displays `⚠️ TLS VERIFICATION DISABLED (Insecure)` in danger/amber colors whenever enabled, even if an old certificate fingerprint is retained.
-  - **Session Locking**: Biometric/device-credential screen lock protects in-memory credentials.
-  - **Zero Telemetry**: No third-party analytics, tracking SDKs, or background telemetry.
+The published v0.1.1 APK uses the same signing certificate as v0.1.0 and can upgrade that release. Locally built and GitHub Actions APKs may use different debug keys and cannot necessarily replace an existing install. The application ID remains `com.homelabpocket` for upgrade continuity.
 
----
+## Alpha limitations
 
-## ⚠️ Alpha Limitations (v0.1.1-alpha)
+- **Incomplete device coverage:** user-provided phone screenshots confirm live PDM login and inventory, not comprehensive device acceptance or live PVE power-action qualification. Automated JVM tests are not device tests.
+- **Missing PDM metrics:** root filesystem, disk/network rates and storage types may display `?`, a zero placeholder or `UNKNOWN`. A missing value does **not** mean zero usage. Root filesystem usage is distinct from configured datastore capacity.
+- **Unpolished UI:** composite remote/node names, unavailable-action buttons and refresh styling remain visible in v0.1.1. See the [unreleased UI roadmap](docs/ROADMAP.md).
+- **Storage errors:** configuration and credentials span separate preference files. Saves are not crash-atomic, and rollback is not guaranteed if recovery writes fail. Review saved endpoints after a storage error before reconnecting.
+- **Debug signing:** this alpha and CI builds are for testing. Production release signing is not configured in the default workflow.
 
-See [independent verification and signing details](VERIFICATION.md). This alpha is debug-signed. User-provided phone captures confirm live PDM login and inventory; broader device acceptance remains incomplete. Saves span separate preference files: failed-disk-write tests establish in-process rollback, **not crash-atomic or guaranteed durable rollback** when recovery writes also fail. Review saved endpoints after a storage error before reconnecting.
+See [verification and signing details](VERIFICATION.md) for version-scoped evidence and [SECURITY.md](SECURITY.md) for security reporting.
 
-Please note the following honest disclosures and architectural limitations in this alpha release:
+## Build from source
 
-1. **PDM Power & Terminal Routes Disabled & Live-Device Qualification**:
-   - Guest power actions (start/stop/reboot) and terminal streams via PDM are explicitly disabled in this release to prevent speculative endpoint misrouting. Terminal streaming is disabled.
-   - PDM mode provides read-only discovery, inventory tracking, and telemetry based on upstream API conformance testing.
-   - **Live-Device Qualification:** User-provided screenshots confirm PDM login and read-only inventory on a physical Android phone against a live PDM deployment. Power operations and terminal streaming through PDM remain unsupported. To perform power operations, connect directly to the target host's standalone PVE endpoint.
-
-2. **Built-in Live Streaming Terminal Disabled & SSH Target Honesty**:
-   - Proxmox `termproxy` / `vncwebsocket` requires a dedicated pinned WebSocket client transport. Built-in interactive streaming is disabled to ensure honest operation without false-success prompts.
-   - Direct SSH is disabled when the target host cannot be verified to match the selected guest or peer node. External SSH client dispatch and web console browser fallbacks are available as alternative mechanisms.
-
-3. **Behavioral JVM Tests vs Device Acceptance**:
-   - The test suite executes 184 automated behavioral tests across API, security, routing, transactional rollback, and lifecycle components on an ARM64 JVM.
-   - **Important Limitation:** These automated receipts prove software logic, HTTP protocol conformance, and crypto boundaries, but do NOT constitute physical Android hardware device proof (the JVM build/test run itself did not attach a phone or emulator).
-
-4. **Internal Application ID**:
-   - The application ID remains `com.homelabpocket` to ensure seamless upgrade continuity for existing users. The user-facing application label is **PVE Pocket**.
-
-5. **Demo Mode Removed**:
-   - All synthetic mock fixtures and demo toggles have been removed. The application only interacts with user-configured servers.
-
----
-
-## 🛠️ Building from Source
-
-PVE Pocket uses a transparent, portable shell-based build pipeline supporting both standard Ubuntu x86_64 environments and ARM64 single-board computers (such as Raspberry Pi).
-
-### Option A: Building on Ubuntu x86_64 / Debian (Aligned with GitHub Actions Setup)
+The project uses a shell build pipeline, not a Gradle wrapper. Clone the repository first:
 
 ```bash
-# 1. Install prerequisites (JDK 17, test dependencies, packaging utilities)
+git clone https://github.com/CrashxZ/pve-pocket.git
+cd pve-pocket
+# Optional: build the published release instead of current main.
+git checkout v0.1.1-alpha
+```
+
+### Ubuntu / Debian x86_64
+
+Install **JDK 17** and the [Android SDK command-line tools](https://developer.android.com/studio#command-tools). Set `JAVA_HOME` to your JDK 17 installation, set `ANDROID_SDK_ROOT` to your SDK directory, and put `sdkmanager` on `PATH`. Then:
+
+```bash
 sudo apt-get update
 sudo apt-get install -y openjdk-17-jdk junit4 libhamcrest-java libandroid-json-java zipalign
-
-# 2. Install Android SDK Platform 29 and Build-Tools (d8, aapt) via sdkmanager
-# (Ubuntu apt packages alone do not install platform-29 or d8; install via sdkmanager matching CI)
-yes | sdkmanager --licenses || true
+sdkmanager --licenses
 sdkmanager "platforms;android-29" "build-tools;29.0.3"
-
-# 3. Run the portable build script
-export ANDROID_HOME="${ANDROID_SDK_ROOT:-/usr/lib/android-sdk}"
+export ANDROID_HOME="$ANDROID_SDK_ROOT"
 bash tools/build.sh
 ```
 
-> **CI / Ubuntu Runner Qualification:** The previous release passed GitHub Actions on Ubuntu with JDK 17. This release retains that pipeline; its own Actions run is recorded separately from the independent ARM64 verification in [verification details](VERIFICATION.md).
+JDK 17 matches the [GitHub Actions workflow](.github/workflows/ci.yml); newer JDKs can be incompatible with this legacy SDK's D8.
 
-### Option B: Building on Raspberry Pi (ARM64)
+### Raspberry Pi / Debian ARM64
 
-> **Note:** The local Raspberry Pi reference host environment remains on OpenJDK 21, whereas Ubuntu x86_64 and GitHub Actions CI target OpenJDK 17.
+The [ARM64 bootstrap](tools/bootstrap-tools.sh) downloads a user-local JDK 21 and Android toolchain; it requires network access, `curl`, `unzip`, `tar`, and Debian package tools/repositories. It is an alternative to the x86_64 SDK setup, not an additional step.
 
 ```bash
-# 1. Run user-local bootstrap (verifies pinned SHA-256 tool checksums and writes tools/env.sh)
 bash tools/bootstrap-tools.sh
-
-# 2. Compile and run behavioral tests
 source tools/env.sh
 bash tools/build.sh
 ```
 
-> **Environment & Verification Disclosure:** The master build pipeline and behavioral test suite (184 tests) were verified locally on an ARM64 Linux development host (Raspberry Pi OS). The previous release passed Ubuntu GitHub Actions; current-release CI is qualified separately. User-provided phone captures confirm PDM login and inventory, not comprehensive device acceptance. Toolchain bootstrap from scratch was not re-exercised on this offline device.
+Both paths compile the app, run the JVM behavioral suite, package and sign **`artifacts/pve-pocket-debug.apk`**. Fresh ARM64 bootstrap downloads were not re-qualified for v0.1.1; see [verification details](VERIFICATION.md). Build outputs and signing keys must not be committed.
 
-The resulting signed APK will be written to `artifacts/pve-pocket-debug.apk`.
+## Roadmap
 
----
+The next focus is [0.1.2 UI polish](docs/ROADMAP.md): clearer missing-metric states, readable remote/node names, less clutter in PDM mode, and consistent controls. This is development work, **not a published release or a promise of new PDM management support**.
 
-## 🔐 Signing & Release Management
+[Report a bug or request a feature](https://github.com/CrashxZ/pve-pocket/issues). Do not include credentials, private keys or sensitive server details.
 
-- **CI Ephemeral Debug Builds**: Pull request and branch builds generated by GitHub Actions are signed with an ephemeral debug keystore generated during the build. These builds are intended for testing and behavioral verification only.
-- **Production Upgrades**: To update an existing device install without uninstalling, the APK must be signed with the repository owner's original private signing key.
-- **Release Signing Pipeline (Future / Unconfigured)**:
-  Dedicated GitHub Actions release secret injection (`RELEASE_KEYSTORE_BASE64`, `RELEASE_KEY_ALIAS`, etc.) is currently unconfigured in the default CI workflow to maintain a strictly read-only, credential-less security posture. Production releases are signed offline or through dedicated owner-configured release workflows; configuring these secrets in GitHub repository settings does not automatically enable production release publishing in the current workflow.
+## License and attribution
 
----
+Licensed under the [GNU General Public License v3.0 or later](LICENSE). See [NOTICE.md](NOTICE.md) for third-party notices and [SECURITY.md](SECURITY.md) for vulnerability disclosure.
 
-## 📄 License
-
-PVE Pocket is licensed under the [GNU General Public License v3.0 or later](LICENSE) (GPL-3.0-or-later).
-Third-party component notices and licenses are documented in [NOTICE.md](NOTICE.md).
-Security policies and vulnerability disclosure guidelines are documented in [SECURITY.md](SECURITY.md).
+Application and tests authored with Antigravity; independently reviewed and released with Hermes. Maintained by [Mainak Mondal / CrashxZ](https://github.com/CrashxZ).
