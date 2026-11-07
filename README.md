@@ -13,6 +13,8 @@ A native Android app for monitoring and managing Proxmox VE (PVE) hosts and gues
 
 This is a **debug-signed test release**, not a production-ready client. See the [project roadmap](docs/ROADMAP.md) for future milestones.
 
+> **v0.1.5-alpha candidate in review.** The next release is a verified candidate pending release publication. It delivers foreground auto-refresh lifecycle fixes (v0.1.4) and phone-field regression fixes (v0.1.5): correct Proxmox task `WARNINGS` classification, consolidated node-detail telemetry eliminating fake zero placeholders, and sibling remote failure isolation. See [release notes](docs/RELEASE-0.1.5-alpha.md) and [changelog](CHANGELOG.md). The download link above and screenshots below remain at the last published v0.1.3 until the release is officially published.
+
 ## Screenshots
 
 Real Android captures of **v0.1.3-alpha** connected to a live PDM deployment; system bars are cropped. These show the released app, not UI mockups.
@@ -54,6 +56,8 @@ The published v0.1.3 APK uses the same signing certificate as older releases (v0
 ## Alpha limitations
 
 - **Incomplete device coverage:** user-provided phone screenshots confirm phone UI layout and live inventory on a live PDM deployment, not comprehensive device lifecycle, Keystore, biometric, or live power-action execution. Automated JVM tests are not device tests. Testing was conducted without live power mutation requests.
+- **Physical phone runtime gap (v0.1.5-alpha candidate):** the v0.1.5-alpha candidate was verified on headless JVM test harnesses, mock Android doubles, and loopback HTTPS fixtures; phone runtime is NOT_TESTED. Physical phone runtime — including live dialog display, Android Activity windowing, hardware Keystore, and live power action confirmation on a real device — remains an explicit acceptance gap. No live lab environments were tested. The specific cause of a reported VM guest shutdown failure on a physical phone remains UNKNOWN without physical device and hypervisor logs; no speculative attribution has been made.
+- **Node detail request budgets:** the 15s fleet resources fetch and 5s optional storage backend enrichment source budgets exclude preceding credential acquisition and do not prove total UI deadline from invocation. Synthetic sibling delay tests (100ms fixture) demonstrate transport-seam isolation without hanging, but do not prove a 20s UI deadline or physical-runtime completion; no total UI ceiling is proven.
 - **Power action concurrency & tracking:** Concurrency guard (`ActionGuard`) only holds during client tracking, not necessarily server-side completion. Cancel stops client tracking, not an already-dispatched server operation. Timeout/network failure may leave the outcome unknown; verify guest/task state before submitting another action.
 - **Upstream reboot limitation:** PDM guest reboot is not supported by upstream Proxmox Datacenter Manager API routes. PDM mode provides Start, Graceful Shutdown, and Force Stop only; the app honestly surfaces this limitation rather than attempting unsafe or synthetic reboots.
 - **Storage backend status & metrics:** storage backend status enrichment queries upstream `/nodes/{node}/storage/{storage}/status` with a bounded cache; missing/unsupported metrics, HTTP 403, or older PDM versions fall back to `Unavailable` or `?`. Missing metrics are distinct from zero usage. UNKNOWN guest/node states are handled safely.

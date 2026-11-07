@@ -8,6 +8,7 @@ import com.homelabpocket.api.ActionGuard;
 import com.homelabpocket.api.FavoritesStore;
 import com.homelabpocket.api.ServerConfigStore;
 import com.homelabpocket.api.SessionManager;
+import com.homelabpocket.scheduler.RefreshPreferenceStore;
 import com.homelabpocket.security.CredentialStore;
 
 /**
@@ -22,6 +23,7 @@ public class HomelabApp extends Application {
     private CredentialStore credentialStore;
     private SessionManager sessionManager;
     private FavoritesStore favoritesStore;
+    private RefreshPreferenceStore refreshPreferenceStore;
 
     @Override
     public void onCreate() {
@@ -32,6 +34,7 @@ public class HomelabApp extends Application {
         this.credentialStore = new CredentialStore(this);
         this.sessionManager = new SessionManager(this.credentialStore);
         this.favoritesStore = new FavoritesStore(this);
+        this.refreshPreferenceStore = new RefreshPreferenceStore(this);
     }
 
     public static HomelabApp getInstance() {
@@ -52,6 +55,10 @@ public class HomelabApp extends Application {
 
     public FavoritesStore getFavoritesStore() {
         return favoritesStore;
+    }
+
+    public RefreshPreferenceStore getRefreshPreferenceStore() {
+        return refreshPreferenceStore;
     }
 
     public ActionGuard getActionGuard() {

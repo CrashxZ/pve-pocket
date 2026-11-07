@@ -5,7 +5,10 @@ package com.homelabpocket.ui.vms;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.ProgressDialog;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
@@ -18,6 +21,8 @@ import android.widget.Toast;
 
 import com.homelabpocket.HomelabApp;
 import com.homelabpocket.R;
+import com.homelabpocket.ui.UiPresentationPolicy;
+import com.homelabpocket.api.ActionGuard;
 import com.homelabpocket.api.ApiException;
 import com.homelabpocket.api.PdmApiDriver;
 import com.homelabpocket.api.PveApiDriver;
@@ -25,6 +30,7 @@ import com.homelabpocket.model.AuthCredentials;
 import com.homelabpocket.model.GuestInfo;
 import com.homelabpocket.model.ServerConfig;
 import com.homelabpocket.model.TaskResult;
+import com.homelabpocket.scheduler.AutoRefreshScheduler;
 import com.homelabpocket.ui.terminal.TerminalActivity;
 import com.homelabpocket.util.JsonUtil;
 
@@ -42,6 +48,37 @@ public class VmDetailActivity extends Activity {
     private String node;
     private String serverId;
     private GuestInfo.GuestType type;
+    private boolean isActivityResumed = false;
+    private int activeConfirmationCount = 0;
+
+    private AutoRefreshScheduler scheduler;
+    private com.homelabpocket.ui.UiPresentationPolicy.ActionCallerTransitionState lastAcknowledgedAction;
+
+    public void setLastAcknowledgedAction(com.homelabpocket.ui.UiPresentationPolicy.ActionCallerTransitionState ack) {
+        this.lastAcknowledgedAction = ack;
+    }
+
+    public com.homelabpocket.ui.UiPresentationPolicy.ActionCallerTransitionState getLastAcknowledgedAction() {
+        return lastAcknowledgedAction;
+    }
+
+    private final BroadcastReceiver screenReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (intent == null || intent.getAction() == null) return;
+            if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
+                if (scheduler != null) scheduler.setScreenOff(true);
+            } else if (Intent.ACTION_SCREEN_ON.equals(intent.getAction()) ||
+                       Intent.ACTION_USER_PRESENT.equals(intent.getAction())) {
+                android.app.KeyguardManager km = (android.app.KeyguardManager) getSystemService(KEYGUARD_SERVICE);
+                boolean locked = km != null && km.isKeyguardLocked();
+                if (scheduler != null) {
+                    scheduler.setDeviceLocked(locked);
+                    scheduler.setScreenOff(false);
+                }
+            }
+        }
+    };
 
     private Button btnBack;
     private TextView tvTitle;
@@ -62,19 +99,12 @@ public class VmDetailActivity extends Activity {
     private Button btnTerminal;
 
     private GuestInfo currentGuest;
+    private boolean isGuestMetricsStale = false;
     private boolean isActionRunning = false;
     private ExecutePowerTask currentPowerTask;
-
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        if (currentPowerTask != null) {
-            currentPowerTask.cancel(true);
-            if (currentPowerTask.getLifecycleOwner() != null) {
-                currentPowerTask.getLifecycleOwner().requestCancel();
-            }
-        }
-    }
+    public ExecutePowerTask getCurrentPowerTask() { return currentPowerTask; }
+    public void setCurrentPowerTask(ExecutePowerTask task) { this.currentPowerTask = task; }
+    private boolean hasShownTargetLookupFailureToast = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -100,7 +130,69 @@ public class VmDetailActivity extends Activity {
             btnTerminal.setVisibility(View.GONE);
         }
 
-        loadData();
+        scheduler = new AutoRefreshScheduler(
+                HomelabApp.getInstance().getRefreshPreferenceStore(),
+                callback -> new LoadGuestTask(callback).execute(),
+                () -> isActionRunning || currentPowerTask != null || activeConfirmationCount > 0 ||
+                      ActionGuard.getInstance().isGuestActionRunning(serverId, node, type != null ? type.name() : null, vmid)
+        );
+        // Prompt fresh read handled in onResume
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        isActivityResumed = true;
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_SCREEN_OFF);
+        filter.addAction(Intent.ACTION_SCREEN_ON);
+        filter.addAction(Intent.ACTION_USER_PRESENT);
+        try {
+            registerReceiver(screenReceiver, filter);
+        } catch (Throwable ignored) {}
+
+        android.app.KeyguardManager km = (android.app.KeyguardManager) getSystemService(KEYGUARD_SERVICE);
+        boolean keyguardLocked = km != null && km.isKeyguardLocked();
+        boolean sessionLocked = HomelabApp.getInstance().getSessionManager().isLocked();
+
+        android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+        boolean isInteractive = (pm == null) || pm.isInteractive();
+
+        if (scheduler != null) {
+            scheduler.setScreenOff(!isInteractive);
+            scheduler.setDeviceLocked(keyguardLocked);
+            scheduler.setSessionLocked(sessionLocked);
+            scheduler.resume();
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        isActivityResumed = false;
+        try {
+            unregisterReceiver(screenReceiver);
+        } catch (Throwable ignored) {}
+
+        if (scheduler != null) {
+            scheduler.pause();
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        isActivityResumed = false;
+        if (scheduler != null) {
+            scheduler.destroy();
+        }
+        if (currentPowerTask != null) {
+            currentPowerTask.cancel(true);
+            if (currentPowerTask.getLifecycleOwner() != null) {
+                currentPowerTask.getLifecycleOwner().requestCancel();
+            }
+            currentPowerTask = null;
+        }
     }
 
     private void initViews() {
@@ -163,11 +255,25 @@ public class VmDetailActivity extends Activity {
     }
 
     private void loadData() {
-        new LoadGuestTask().execute();
+        hasShownTargetLookupFailureToast = false;
+        if (scheduler != null) {
+            scheduler.triggerManualRefresh();
+        } else {
+            new LoadGuestTask(null).execute();
+        }
+    }
+
+    public AutoRefreshScheduler getScheduler() {
+        return scheduler;
     }
 
     private void handleTargetLookupFailure(String message) {
+        handleTargetLookupFailure(message, true);
+    }
+
+    private void handleTargetLookupFailure(String message, boolean showToast) {
         this.currentGuest = null;
+        this.isGuestMetricsStale = false;
         View cardPower = findViewById(R.id.card_guest_power);
         if (cardPower != null) cardPower.setVisibility(View.GONE);
         btnStart.setVisibility(View.GONE);
@@ -183,13 +289,16 @@ public class VmDetailActivity extends Activity {
         tvStatus.setBackgroundResource(R.drawable.bg_chip_stopped);
         tvStatus.setTextColor(getResources().getColor(R.color.matrix_text_muted));
         tvUptime.setText("State: Target unreachable, offline, or moved");
-        if (message != null && !message.isEmpty()) {
+        if (showToast && !hasShownTargetLookupFailureToast && message != null && !message.isEmpty()) {
+            hasShownTargetLookupFailureToast = true;
             Toast.makeText(this, message, Toast.LENGTH_LONG).show();
         }
     }
 
     private void bindGuest(GuestInfo g) {
         this.currentGuest = g;
+        this.isGuestMetricsStale = false;
+        this.hasShownTargetLookupFailureToast = false;
         // Do NOT replace type from fetched guest! Explicit intent validation preserves type invariant.
         tvTitle.setText(g.name + " [" + g.vmid + "]");
         tvIdNode.setText(com.homelabpocket.ui.UiPresentationPolicy.formatVmDetailSubtitle(type != null ? type.name() : "Guest", node));
@@ -200,101 +309,131 @@ public class VmDetailActivity extends Activity {
                 serverConfig = HomelabApp.getInstance().getServerConfigStore().findById(serverId);
             }
         } catch (Throwable ignored) {}
-        boolean isPdm = com.homelabpocket.ui.UiPresentationPolicy.isPdm(serverConfig);
 
-        boolean isRunning = g.state == GuestInfo.RunState.RUNNING;
-        boolean isStopped = g.state == GuestInfo.RunState.STOPPED;
-        if (isRunning) {
-            tvStatus.setText("RUNNING");
-            tvStatus.setBackgroundResource(R.drawable.bg_chip_running);
-            tvStatus.setTextColor(getResources().getColor(R.color.matrix_phosphor));
+        applyGuestMetrics(com.homelabpocket.ui.UiPresentationPolicy.evaluateGuestMetricsBinding(g, false, serverConfig, null));
+    }
 
-            btnStart.setVisibility(View.GONE);
-            btnStart.setEnabled(false);
-            btnShutdown.setVisibility(View.VISIBLE);
-            btnShutdown.setEnabled(true);
-            btnReboot.setVisibility(View.VISIBLE);
-            btnReboot.setEnabled(true);
-            btnForceStop.setVisibility(View.VISIBLE);
-            btnForceStop.setEnabled(true);
-
-            int cpuPct = (int) Math.round(!Double.isNaN(g.cpuUsage) ? g.cpuUsage * 100 : 0);
-            tvCpu.setText("CPU: " + cpuPct + "%");
-            progCpu.setProgress(cpuPct);
-
-            long ramPct = g.memTotal > 0 ? (g.memUsed * 100 / g.memTotal) : 0;
-            tvRam.setText("RAM: " + JsonUtil.formatBytes(g.memUsed) + " / " + JsonUtil.formatBytes(g.memTotal));
-            progRam.setProgress((int) ramPct);
-
-            tvDisk.setText(com.homelabpocket.ui.UiPresentationPolicy.formatGuestDisk(g, isPdm));
-            tvUptime.setText("Uptime: " + JsonUtil.formatUptime(g.uptime));
-        } else if (isStopped) {
-            tvStatus.setText("STOPPED");
-            tvStatus.setBackgroundResource(R.drawable.bg_chip_stopped);
-            tvStatus.setTextColor(getResources().getColor(R.color.matrix_text_muted));
-
-            btnStart.setVisibility(View.VISIBLE);
-            btnStart.setEnabled(true);
-            btnShutdown.setVisibility(View.GONE);
-            btnShutdown.setEnabled(false);
-            btnReboot.setVisibility(View.GONE);
-            btnReboot.setEnabled(false);
-            btnForceStop.setVisibility(View.GONE);
-            btnForceStop.setEnabled(false);
-
-            tvCpu.setText("CPU: -");
-            progCpu.setProgress(0);
-            tvRam.setText("RAM: - / " + JsonUtil.formatBytes(g.memTotal));
-            progRam.setProgress(0);
-            tvDisk.setText(com.homelabpocket.ui.UiPresentationPolicy.formatGuestDisk(g, isPdm));
-            tvUptime.setText("State: Powered down");
-        } else {
-            tvStatus.setText("UNKNOWN");
-            tvStatus.setBackgroundResource(R.drawable.bg_chip_stopped);
-            tvStatus.setTextColor(getResources().getColor(R.color.matrix_text_muted));
-
-            btnStart.setVisibility(View.GONE);
-            btnStart.setEnabled(false);
-            btnShutdown.setVisibility(View.GONE);
-            btnShutdown.setEnabled(false);
-            btnReboot.setVisibility(View.GONE);
-            btnReboot.setEnabled(false);
-            btnForceStop.setVisibility(View.GONE);
-            btnForceStop.setEnabled(false);
-
-            tvCpu.setText("CPU: -");
-            progCpu.setProgress(0);
-            tvRam.setText("RAM: - / " + JsonUtil.formatBytes(g.memTotal));
-            progRam.setProgress(0);
-            tvDisk.setText(com.homelabpocket.ui.UiPresentationPolicy.formatGuestDisk(g, isPdm));
-            tvUptime.setText("State: Target unreachable, offline, or unknown");
+    public void markGuestMetricsStale(String error) {
+        this.isGuestMetricsStale = true;
+        if (currentGuest != null) {
+            // Preserve cached metrics clearly stale/Unknown with original fetchedAt
+            this.currentGuest = new GuestInfo(
+                    currentGuest.vmid, currentGuest.name, currentGuest.type,
+                    GuestInfo.RunState.UNKNOWN,
+                    currentGuest.node, currentGuest.serverId,
+                    currentGuest.cpuUsage, currentGuest.cpuCount,
+                    currentGuest.memUsed, currentGuest.memMax,
+                    currentGuest.diskUsed, currentGuest.diskTotal,
+                    currentGuest.diskRead, currentGuest.diskWrite,
+                    currentGuest.netIn, currentGuest.netOut,
+                    currentGuest.uptime, currentGuest.tags,
+                    currentGuest.favorited, currentGuest.fetchedAt);
         }
+        ServerConfig serverConfig = null;
+        try {
+            if (HomelabApp.getInstance() != null && HomelabApp.getInstance().getServerConfigStore() != null) {
+                serverConfig = HomelabApp.getInstance().getServerConfigStore().findById(serverId);
+            }
+        } catch (Throwable ignored) {}
+
+        applyGuestMetrics(com.homelabpocket.ui.UiPresentationPolicy.evaluateGuestMetricsBinding(
+                currentGuest, true, serverConfig, error));
+    }
+
+    private void applyGuestMetrics(com.homelabpocket.ui.UiPresentationPolicy.GuestMetricsBindingState state) {
+        if (state == null) return;
+        boolean isRunning = "RUNNING".equals(state.statusText);
+        boolean isStopped = "STOPPED".equals(state.statusText);
+
+        if (tvStatus != null) {
+            tvStatus.setText(state.statusText);
+            if (isRunning) {
+                tvStatus.setBackgroundResource(R.drawable.bg_chip_running);
+                tvStatus.setTextColor(getResources().getColor(R.color.matrix_phosphor));
+            } else {
+                tvStatus.setBackgroundResource(R.drawable.bg_chip_stopped);
+                tvStatus.setTextColor(getResources().getColor(R.color.matrix_text_muted));
+            }
+        }
+
+        if (tvCpu != null) tvCpu.setText(state.cpuText);
+        if (progCpu != null) progCpu.setProgress(state.cpuPercent);
+        if (tvRam != null) tvRam.setText(state.ramText);
+        if (progRam != null) progRam.setProgress(state.ramPercent);
+        if (tvDisk != null) tvDisk.setText(state.diskText);
+        if (tvUptime != null) tvUptime.setText(state.uptimeText);
 
         View cardPower = findViewById(R.id.card_guest_power);
         View cardTerminal = findViewById(R.id.card_guest_terminal);
         View cardPdmNotice = findViewById(R.id.card_pdm_notice);
 
-        if (cardPower != null) cardPower.setVisibility((isRunning || isStopped) ? View.VISIBLE : View.GONE);
+        if (cardPower != null) cardPower.setVisibility(state.isPowerCardVisible ? View.VISIBLE : View.GONE);
         if (cardPdmNotice != null) cardPdmNotice.setVisibility(View.GONE);
 
-        if (isPdm || (!isRunning && !isStopped)) {
-            btnTerminal.setVisibility(View.GONE);
-            btnTerminal.setEnabled(false);
-            if (cardTerminal != null) cardTerminal.setVisibility(View.GONE);
-        } else {
-            btnTerminal.setEnabled(true);
-            if (cardTerminal != null) cardTerminal.setVisibility(View.VISIBLE);
+        if (btnStart != null && btnShutdown != null && btnReboot != null && btnForceStop != null) {
+            if (state.isPowerControlsEnabled) {
+                if (isRunning) {
+                    btnStart.setVisibility(View.GONE);
+                    btnStart.setEnabled(false);
+                    btnShutdown.setVisibility(View.VISIBLE);
+                    btnShutdown.setEnabled(true);
+                    btnReboot.setVisibility(View.VISIBLE);
+                    btnReboot.setEnabled(true);
+                    btnForceStop.setVisibility(View.VISIBLE);
+                    btnForceStop.setEnabled(true);
+                } else if (isStopped) {
+                    btnStart.setVisibility(View.VISIBLE);
+                    btnStart.setEnabled(true);
+                    btnShutdown.setVisibility(View.GONE);
+                    btnShutdown.setEnabled(false);
+                    btnReboot.setVisibility(View.GONE);
+                    btnReboot.setEnabled(false);
+                    btnForceStop.setVisibility(View.GONE);
+                    btnForceStop.setEnabled(false);
+                }
+            } else {
+                btnStart.setVisibility(View.GONE);
+                btnStart.setEnabled(false);
+                btnShutdown.setVisibility(View.GONE);
+                btnShutdown.setEnabled(false);
+                btnReboot.setVisibility(View.GONE);
+                btnReboot.setEnabled(false);
+                btnForceStop.setVisibility(View.GONE);
+                btnForceStop.setEnabled(false);
+            }
+        }
+
+        if (btnTerminal != null) {
+            if (state.isTerminalVisible) {
+                btnTerminal.setVisibility(View.VISIBLE);
+                btnTerminal.setEnabled(true);
+                if (cardTerminal != null) cardTerminal.setVisibility(View.VISIBLE);
+            } else {
+                btnTerminal.setVisibility(View.GONE);
+                btnTerminal.setEnabled(false);
+                if (cardTerminal != null) cardTerminal.setVisibility(View.GONE);
+            }
         }
     }
 
-    private void confirmPowerAction(String action) {
-        if (currentGuest == null || type == null || !com.homelabpocket.ui.UiPresentationPolicy.isGuestTargetValid(currentGuest, node, vmid, type)) {
-            Toast.makeText(this, "Action blocked: Target not verified, moved, or offline. Please refresh.", Toast.LENGTH_SHORT).show();
-            return;
-        }
+    public GuestInfo getCurrentGuest() {
+        return currentGuest;
+    }
 
-        if (HomelabApp.getInstance().getSessionManager().isLocked()) {
-            Toast.makeText(this, "Action blocked: Session is locked. Please unlock in Settings first.", Toast.LENGTH_LONG).show();
+    public boolean isGuestMetricsStale() {
+        return isGuestMetricsStale;
+    }
+
+    public static boolean preflightActionCheck(GuestInfo currentGuest, String node, int vmid, GuestInfo.GuestType type, boolean isGuestMetricsStale, boolean isSessionLocked) {
+        if (isSessionLocked) return false;
+        if (currentGuest == null || type == null || isGuestMetricsStale) return false;
+        return com.homelabpocket.ui.UiPresentationPolicy.isGuestTargetValid(currentGuest, node, vmid, type);
+    }
+
+    private void confirmPowerAction(String action) {
+        boolean sessionLocked = HomelabApp.getInstance().getSessionManager().isLocked();
+        if (!preflightActionCheck(currentGuest, node, vmid, type, isGuestMetricsStale, sessionLocked)) {
+            Toast.makeText(this, sessionLocked ? "Action blocked: Session is locked. Please unlock in Settings first." : "Action blocked: Target not verified, moved, or offline. Please refresh.", Toast.LENGTH_SHORT).show();
             return;
         }
 
@@ -342,22 +481,21 @@ public class VmDetailActivity extends Activity {
         msg.append("• VMID: ").append(vmid).append("\n");
         msg.append("• Name: ").append(guestName);
 
-        new AlertDialog.Builder(this)
+        AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle(actionTitle)
                 .setMessage(msg.toString())
-                .setPositiveButton(actionVerb, (dialog, which) -> executeAction(action))
+                .setPositiveButton(actionVerb, (d, which) -> executeAction(action))
                 .setNegativeButton("Cancel", null)
-                .show();
+                .create();
+        dialog.setOnDismissListener(d -> activeConfirmationCount = Math.max(0, activeConfirmationCount - 1));
+        activeConfirmationCount++;
+        dialog.show();
     }
 
     private void confirmForceStop() {
-        if (currentGuest == null || type == null || !com.homelabpocket.ui.UiPresentationPolicy.isGuestTargetValid(currentGuest, node, vmid, type)) {
-            Toast.makeText(this, "Action blocked: Target not verified, moved, or offline. Please refresh.", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        if (HomelabApp.getInstance().getSessionManager().isLocked()) {
-            Toast.makeText(this, "Action blocked: Session is locked. Please unlock in Settings first.", Toast.LENGTH_LONG).show();
+        boolean sessionLocked = HomelabApp.getInstance().getSessionManager().isLocked();
+        if (!preflightActionCheck(currentGuest, node, vmid, type, isGuestMetricsStale, sessionLocked)) {
+            Toast.makeText(this, sessionLocked ? "Action blocked: Session is locked. Please unlock in Settings first." : "Action blocked: Target not verified, moved, or offline. Please refresh.", Toast.LENGTH_SHORT).show();
             return;
         }
 
@@ -383,7 +521,7 @@ public class VmDetailActivity extends Activity {
         warnMsg.append("• VMID: ").append(vmid).append(" (").append(guestName).append(")\n\n");
         warnMsg.append("Do you want to proceed to the second confirmation?");
 
-        new AlertDialog.Builder(this)
+        AlertDialog warnDialog = new AlertDialog.Builder(this)
                 .setTitle("Warning: Force Stop")
                 .setMessage(warnMsg.toString())
                 .setPositiveButton("Proceed...", (dialog, which) -> {
@@ -391,11 +529,14 @@ public class VmDetailActivity extends Activity {
                     showSecondForceStopConfirmation(isPdm, remote, baseNode, serverName, guestTypeName, guestName);
                 })
                 .setNegativeButton("Cancel", null)
-                .show();
+                .create();
+        warnDialog.setOnDismissListener(dialog -> activeConfirmationCount = Math.max(0, activeConfirmationCount - 1));
+        activeConfirmationCount++;
+        warnDialog.show();
     }
 
     private void showSecondForceStopConfirmation(boolean isPdm, String remote, String baseNode, String serverName, String guestTypeName, String guestName) {
-        new AlertDialog.Builder(this)
+        AlertDialog secondDialog = new AlertDialog.Builder(this)
                 .setTitle("Second Confirmation: Force Stop")
                 .setMessage("Are you ABSOLUTELY SURE you want to force stop " + guestTypeName + " " + vmid + " (" + guestName + ")?\n\n"
                         + "This immediate power-kill action cannot be undone.\n\n"
@@ -404,7 +545,10 @@ public class VmDetailActivity extends Activity {
                         + "• Server: " + serverName)
                 .setPositiveButton("Force Stop (Kill)", (dialog, which) -> executeAction("stop"))
                 .setNegativeButton("Cancel", null)
-                .show();
+                .create();
+        secondDialog.setOnDismissListener(dialog -> activeConfirmationCount = Math.max(0, activeConfirmationCount - 1));
+        activeConfirmationCount++;
+        secondDialog.show();
     }
 
     private void showQemuConsoleDisclosure() {
@@ -451,16 +595,11 @@ public class VmDetailActivity extends Activity {
         dialog.show();
     }
 
-    private void executeAction(String action) {
+    public void executeAction(String action) {
         // Fail-closed: Require successful exact current target lookup before controls/POST
-        if (!com.homelabpocket.ui.UiPresentationPolicy.isGuestTargetValid(currentGuest, node, vmid, type)) {
-            Toast.makeText(this, "Action blocked: Target not verified, moved, or offline. Please refresh.", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        // Enforce session lock before action
-        if (HomelabApp.getInstance().getSessionManager().isLocked()) {
-            Toast.makeText(this, "Action blocked: Session is locked. Please unlock in Settings first.", Toast.LENGTH_LONG).show();
+        boolean sessionLocked = HomelabApp.getInstance().getSessionManager().isLocked();
+        if (!preflightActionCheck(currentGuest, node, vmid, type, isGuestMetricsStale, sessionLocked)) {
+            Toast.makeText(this, sessionLocked ? "Action blocked: Session is locked. Please unlock in Settings first." : "Action blocked: Target not verified, moved, or offline. Please refresh.", Toast.LENGTH_SHORT).show();
             return;
         }
 
@@ -484,57 +623,166 @@ public class VmDetailActivity extends Activity {
         currentPowerTask.execute();
     }
 
-    private class LoadGuestTask extends AsyncTask<Void, Void, GuestInfo> {
+    public static class GuestFetchResult {
+        public final GuestInfo guest;
+        public final String error;
+        public final boolean targetNotFound;
+
+        public GuestFetchResult(GuestInfo guest, String error, boolean targetNotFound) {
+            this.guest = guest;
+            this.error = error;
+            this.targetNotFound = targetNotFound;
+        }
+    }
+
+    private class LoadGuestTask extends AsyncTask<Void, Void, GuestFetchResult> {
+        private final AutoRefreshScheduler.RefreshCallback callback;
+        private final String serverSnapshot;
+
+        LoadGuestTask(AutoRefreshScheduler.RefreshCallback callback) {
+            this.callback = callback;
+            this.serverSnapshot = HomelabApp.getInstance().getServerConfigStore().getConfigFingerprint();
+        }
+
+        LoadGuestTask() {
+            this(null);
+        }
+
         @Override
-        protected GuestInfo doInBackground(Void... voids) {
+        protected GuestFetchResult doInBackground(Void... voids) {
             try {
                 if (type == null) {
-                    return null; // Missing or invalid intent guest type must never recover via lookup
+                    return new GuestFetchResult(null, "Missing or invalid intent guest type", true);
                 }
                 ServerConfig cfg = HomelabApp.getInstance().getServerConfigStore().findById(serverId);
-                if (cfg == null || cfg.isLegacyDemo()) return null;
+                if (cfg == null || cfg.isLegacyDemo()) {
+                    return new GuestFetchResult(null, "Demo server entries cannot execute actions or load detail.", false);
+                }
                 AuthCredentials creds = HomelabApp.getInstance().getSessionManager().getCredentials(cfg);
-                if (creds == null) return null;
+                if (creds == null) {
+                    return new GuestFetchResult(null, "No credentials found for server.", false);
+                }
 
                 if (cfg.type == ServerConfig.ServerType.PDM) {
                     PdmApiDriver pdm = new PdmApiDriver(cfg);
-                    return pdm.fetchGuestDetail(node, vmid, type, creds);
+                    GuestInfo g = pdm.fetchGuestDetail(node, vmid, type, creds);
+                    if (g == null) {
+                        return new GuestFetchResult(null, "Target unavailable: Guest [" + vmid + "] not found on host " + node, true);
+                    }
+                    return new GuestFetchResult(g, null, false);
                 } else {
                     PveApiDriver pve = new PveApiDriver(cfg);
                     List<GuestInfo> guests = pve.fetchAllGuests(node, creds);
                     for (GuestInfo g : guests) {
-                        if (g.vmid == vmid && g.type == type && node.equals(g.node)) return g;
+                        if (g.vmid == vmid && g.type == type && node.equals(g.node)) {
+                            return new GuestFetchResult(g, null, false);
+                        }
                     }
-                    return null;
+                    return new GuestFetchResult(null, "Target unavailable: Guest [" + vmid + "] not found on host " + node, true);
                 }
             } catch (Exception e) {
-                return null;
+                return new GuestFetchResult(null, e.getMessage() != null ? e.getMessage() : "Telemetry fetch failed", false);
             }
         }
 
         @Override
-        protected void onPostExecute(GuestInfo g) {
-            if (g != null) {
+        protected void onPostExecute(GuestFetchResult res) {
+            if (isFinishing() || isDestroyed() || !isActivityResumed) {
+                if (callback != null) {
+                    callback.onError(new IllegalStateException("Activity not in resumed foreground state"), "Detached");
+                }
+                return;
+            }
+
+            if (HomelabApp.getInstance().getSessionManager().isLocked()) {
+                if (scheduler != null) {
+                    scheduler.setSessionLocked(true);
+                }
+                if (callback != null) {
+                    callback.onError(new IllegalStateException("Session locked"), "Session locked");
+                }
+                return;
+            }
+
+            // Scheduler callback validity / owner check
+            if (callback != null && !callback.canAcceptResult()) {
+                callback.onError(new IllegalStateException("Stale or detached callback"), "Stale");
+                return;
+            }
+
+            // Action in progress / power task / confirmation protection
+            if (isActionRunning || currentPowerTask != null || activeConfirmationCount > 0 ||
+                ActionGuard.getInstance().isGuestActionRunning(serverId, node, type != null ? type.name() : null, vmid)) {
+                if (callback != null) {
+                    callback.onError(new IllegalStateException("Action in progress"), "Action in progress");
+                }
+                return;
+            }
+
+            // Server existence and replacement check
+            ServerConfig currentCfg = HomelabApp.getInstance().getServerConfigStore().findById(serverId);
+            if (currentCfg == null || !serverSnapshot.equals(HomelabApp.getInstance().getServerConfigStore().getConfigFingerprint())) {
+                if (callback != null) {
+                    callback.onError(new IllegalStateException("Server configuration changed"), "Configuration changed");
+                }
+                return;
+            }
+
+            if (res.guest != null) {
+                GuestInfo g = res.guest;
                 if (type == null || g.type != type || node == null || !node.equals(g.node) || g.vmid != vmid) {
                     handleTargetLookupFailure("Guest type or identity mismatch on target: expected " +
                             (type != null ? type.name() : "null") + " [" + vmid + "] on " + node +
-                            ", found " + g.type + " [" + g.vmid + "] on " + g.node);
+                            ", found " + g.type + " [" + g.vmid + "] on " + g.node, true);
+                    if (callback != null) {
+                        callback.onError(new Exception("Guest identity mismatch"), "Identity mismatch");
+                    }
                     return;
                 }
                 bindGuest(g);
+                if (callback != null) {
+                    callback.onSuccess();
+                }
+            } else if (res.targetNotFound) {
+                handleTargetLookupFailure(res.error, true);
+                if (callback != null) {
+                    callback.onError(new Exception("Target unavailable"), "Target unavailable");
+                }
             } else {
-                handleTargetLookupFailure("Target unavailable: Guest [" + vmid + "] not found on host " + node);
+                // Routine telemetry transport error or selected remote failure: preserve old data as stale/UNKNOWN, DISABLE power controls!
+                if (currentGuest == null) {
+                    handleTargetLookupFailure(res.error, false);
+                } else {
+                    markGuestMetricsStale(res.error);
+                }
+                if (callback != null) {
+                    callback.onError(new Exception(res.error != null ? res.error : "Telemetry error"), res.error);
+                }
+            }
+        }
+
+        @Override
+        protected void onCancelled(GuestFetchResult res) {
+            if (callback != null) {
+                callback.onError(new IllegalStateException("Task cancelled"), "Cancelled");
+            }
+        }
+
+        @Override
+        protected void onCancelled() {
+            if (callback != null) {
+                callback.onError(new IllegalStateException("Task cancelled"), "Cancelled");
             }
         }
     }
 
-    private class ExecutePowerTask extends AsyncTask<Void, TaskResult, TaskResult> {
+    public class ExecutePowerTask extends AsyncTask<Void, TaskResult, TaskResult> {
         private final String action;
         private final com.homelabpocket.api.ActionGuard.TaskLifecycleOwner lifecycleOwner;
         private ProgressDialog dialog;
         private String error;
 
-        ExecutePowerTask(String action, com.homelabpocket.api.ActionGuard.TaskLifecycleOwner lifecycleOwner) {
+        public ExecutePowerTask(String action, com.homelabpocket.api.ActionGuard.TaskLifecycleOwner lifecycleOwner) {
             this.action = action;
             this.lifecycleOwner = lifecycleOwner;
         }
@@ -574,7 +822,7 @@ public class VmDetailActivity extends Activity {
         }
 
         @Override
-        protected TaskResult doInBackground(Void... voids) {
+        public TaskResult doInBackground(Void... voids) {
             try {
                 if (lifecycleOwner != null) {
                     lifecycleOwner.markStarted();
@@ -823,81 +1071,92 @@ public class VmDetailActivity extends Activity {
         }
 
         @Override
-        protected void onPostExecute(TaskResult taskResult) {
+        public void onPostExecute(TaskResult taskResult) {
             releaseGuardOnce();
             isActionRunning = false;
-            if (dialog != null && dialog.isShowing()) {
-                dialog.dismiss();
-            }
-
-            ServerConfig cfg = HomelabApp.getInstance().getServerConfigStore().findById(serverId);
-            String serverName = cfg != null ? cfg.name : serverId;
-            String guestName = (tvTitle != null && tvTitle.getText() != null) ? tvTitle.getText().toString() : ("VM " + vmid);
-            String targetTypeStr = (type != null ? type.name() : (currentGuest != null && currentGuest.type != null ? currentGuest.type.name() : "Guest"));
-            String targetInfo = targetTypeStr + " " + vmid + " (" + guestName + ") on " + node + " [" + serverName + "]";
-
-            if (taskResult != null) {
-                switch (taskResult.state) {
-                    case OK:
-                        Toast.makeText(VmDetailActivity.this, "Success: " + action + " completed for " + targetInfo, Toast.LENGTH_SHORT).show();
-                        break;
-                    case ERROR:
-                        new AlertDialog.Builder(VmDetailActivity.this)
-                                .setTitle("Task Failed")
-                                .setMessage("Operation '" + action + "' failed on Proxmox.\n\n"
-                                        + "Target: " + targetInfo + "\n\n"
-                                        + "Details: " + (taskResult.exitStatus != null ? taskResult.exitStatus : "Unknown error"))
-                                .setPositiveButton("OK", null)
-                                .show();
-                        break;
-                    case TIMEOUT:
-                        new AlertDialog.Builder(VmDetailActivity.this)
-                                .setTitle("Task Timed Out")
-                                .setMessage("Operation '" + action + "' did not complete within the 60s timeout.\n\n"
-                                        + "Target: " + targetInfo + "\n\n"
-                                        + "Details: " + taskResult.getSummary())
-                                .setPositiveButton("OK", null)
-                                .show();
-                        break;
-                    case UNKNOWN:
-                    default:
-                        new AlertDialog.Builder(VmDetailActivity.this)
-                                .setTitle("Task Status Unknown")
-                                .setMessage("Operation '" + action + "' returned indeterminate status.\n\n"
-                                        + "Target: " + targetInfo + "\n\n"
-                                        + "Details: " + taskResult.getSummary())
-                                .setPositiveButton("OK", null)
-                                .show();
-                        break;
+            currentPowerTask = null;
+            try {
+                if (dialog != null && dialog.isShowing()) {
+                    dialog.dismiss();
                 }
-            } else if (error != null) {
-                new AlertDialog.Builder(VmDetailActivity.this)
-                        .setTitle("Operation Error")
-                        .setMessage("Failed to execute '" + action + "' on " + targetInfo + ":\n\n" + error)
-                        .setPositiveButton("OK", null)
-                        .show();
-            }
 
-            loadData();
+                ServerConfig cfg = HomelabApp.getInstance().getServerConfigStore().findById(serverId);
+                String serverName = cfg != null ? cfg.name : serverId;
+                String guestName = (tvTitle != null && tvTitle.getText() != null) ? tvTitle.getText().toString() : ("VM " + vmid);
+                String targetTypeStr = (type != null ? type.name() : (currentGuest != null && currentGuest.type != null ? currentGuest.type.name() : "Guest"));
+                String targetInfo = targetTypeStr + " " + vmid + " (" + guestName + ") on " + node + " [" + serverName + "]";
+
+                com.homelabpocket.ui.UiPresentationPolicy.ActionCallerTransitionState transition =
+                        transitionCallerAction(taskResult, action, targetInfo, error,
+                                () -> {
+                                    if (scheduler != null) {
+                                        scheduler.requestPostOperationRefresh();
+                                    } else {
+                                        loadData();
+                                    }
+                                });
+
+                if (transition.presentation.type == com.homelabpocket.ui.UiPresentationPolicy.TaskResultPresentation.DialogType.TOAST_SUCCESS) {
+                    Toast.makeText(VmDetailActivity.this, transition.presentation.message, Toast.LENGTH_SHORT).show();
+                } else {
+                    new AlertDialog.Builder(VmDetailActivity.this)
+                            .setTitle(transition.presentation.title)
+                            .setMessage(transition.presentation.message)
+                            .setPositiveButton("OK", null)
+                            .show();
+                }
+
+                VmDetailActivity.this.lastAcknowledgedAction = transition;
+                isActionRunning = transition.isActionRunning;
+            } finally {
+                currentPowerTask = null;
+            }
         }
 
         @Override
         protected void onCancelled(TaskResult taskResult) {
             releaseGuardOnce();
+            currentPowerTask = null;
             isActionRunning = false;
             try {
                 if (dialog != null && dialog.isShowing()) {
                     dialog.dismiss();
                 }
                 Toast.makeText(VmDetailActivity.this, "Operation cancelled: " + action, Toast.LENGTH_SHORT).show();
-                loadData();
+                if (scheduler != null) {
+                    scheduler.requestPostOperationRefresh();
+                } else {
+                    loadData();
+                }
             } catch (Throwable ignored) {}
         }
 
         @Override
         protected void onCancelled() {
             releaseGuardOnce();
-            onCancelled(null);
+            currentPowerTask = null;
+            isActionRunning = false;
+            try {
+                if (dialog != null && dialog.isShowing()) {
+                    dialog.dismiss();
+                }
+                if (scheduler != null) {
+                    scheduler.requestPostOperationRefresh();
+                } else {
+                    loadData();
+                }
+            } catch (Throwable ignored) {}
         }
+    }
+
+    /**
+     * Package-private caller transition seam wired to production ExecutePowerTask.onPostExecute.
+     * Can be invoked directly in behavioral unit tests to verify caller state transitions and isolation.
+     */
+    public static com.homelabpocket.ui.UiPresentationPolicy.ActionCallerTransitionState transitionCallerAction(
+            TaskResult taskResult, String action, String targetInfo, String error,
+            com.homelabpocket.ui.UiPresentationPolicy.PostRefreshTrigger refreshTrigger) {
+        return com.homelabpocket.ui.UiPresentationPolicy.performActionCompletionTransition(
+                taskResult, action, targetInfo, error, refreshTrigger);
     }
 }

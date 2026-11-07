@@ -27,10 +27,10 @@ PVE Pocket is designed with a **fail-closed, privacy-first security posture** fo
    - Working credentials (`AuthCredentials`) exist in memory only as short-lived ticket tokens or API tokens.
    - Devices secured with biometric or lock-screen credentials can lock the active session. When locked, in-memory keys are latched and inaccessible until the user re-authenticates via system biometric/device credential prompts.
 
-5. **Bounded Request Timeouts & Deadlines**:
+6. **Bounded Request Timeouts & Deadlines**:
    - All network operations enforce monotonic request budgets (connect, TLS handshake, header reading, body streaming) backed by watchdog timers to prevent hangs or resource exhaustion.
 
-6. **Zero Analytics & Trackers**:
+7. **Zero Analytics & Trackers**:
    - The application bundles zero advertising SDKs, zero crash analytics libraries, and zero external telemetry endpoints.
 
 ---

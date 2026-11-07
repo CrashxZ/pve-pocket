@@ -89,13 +89,29 @@ public class DashboardView {
     }
 
     public void render(List<NodeStatus> nodes, List<GuestInfo> guests, boolean isLoading, String error) {
+        render(nodes, guests, isLoading, error, 0);
+    }
+
+    public void render(List<NodeStatus> nodes, List<GuestInfo> guests, boolean isLoading, String error, long lastSuccessfulUpdate) {
         HomelabApp app = HomelabApp.getInstance();
         boolean hasServers = !app.getServerConfigStore().loadAll().isEmpty();
 
         // Error message
-        if (error != null && !error.isEmpty()) {
+        boolean hasLive = false;
+        if (nodes != null) {
+            for (NodeStatus n : nodes) {
+                if (n.isOnline()) {
+                    hasLive = true;
+                    break;
+                }
+            }
+        }
+        boolean hasRetainedData = (nodes != null && !nodes.isEmpty()) || (guests != null && !guests.isEmpty());
+        UiPresentationPolicy.ErrorBannerState bannerState =
+                UiPresentationPolicy.evaluateErrorBanner(error, hasRetainedData, lastSuccessfulUpdate, hasLive);
+        if (bannerState.isVisible) {
             tvError.setVisibility(View.VISIBLE);
-            tvError.setText(error);
+            tvError.setText(bannerState.bannerText);
         } else {
             tvError.setVisibility(View.GONE);
         }
@@ -155,8 +171,23 @@ public class DashboardView {
             }
         }
 
-        SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss", Locale.getDefault());
-        tvLastUpdated.setText(activity.getString(R.string.last_updated, sdf.format(new Date())));
+        if (tvLastUpdated != null) {
+            if (lastSuccessfulUpdate > 0) {
+                SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss", Locale.getDefault());
+                String formatted = sdf.format(new Date(lastSuccessfulUpdate));
+                if (error != null && !error.isEmpty()) {
+                    if (hasLive) {
+                        tvLastUpdated.setText(activity.getString(R.string.last_updated, formatted) + " (partial coverage)");
+                    } else {
+                        tvLastUpdated.setText(activity.getString(R.string.last_updated, formatted) + " (stale)");
+                    }
+                } else {
+                    tvLastUpdated.setText(activity.getString(R.string.last_updated, formatted));
+                }
+            } else {
+                tvLastUpdated.setText(activity.getString(R.string.last_updated, "Never"));
+            }
+        }
     }
 
     /**
@@ -175,9 +206,33 @@ public class DashboardView {
         // Separate remote label preserving full internal identity
         if (n.hasSeparateRemote()) {
             tvRemote.setVisibility(View.VISIBLE);
-            tvRemote.setText("[Remote: " + n.getRemoteName() + "]");
+            String remoteLabel = "[Remote: " + n.getRemoteName() + "]";
+            if (n.fetchedAt > 0) {
+                java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault());
+                String timeStr = sdf.format(new java.util.Date(n.fetchedAt));
+                if (n.isOnline()) {
+                    remoteLabel += " \u2022 " + timeStr;
+                } else if (n.status == NodeStatus.Status.UNKNOWN) {
+                    remoteLabel += " \u2022 stale as of " + timeStr;
+                }
+            }
+            tvRemote.setText(remoteLabel);
         } else {
-            tvRemote.setVisibility(View.GONE);
+            if (n.fetchedAt > 0) {
+                java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault());
+                String timeStr = sdf.format(new java.util.Date(n.fetchedAt));
+                if (n.isOnline()) {
+                    tvRemote.setText(timeStr);
+                    tvRemote.setVisibility(View.VISIBLE);
+                } else if (n.status == NodeStatus.Status.UNKNOWN) {
+                    tvRemote.setText("stale as of " + timeStr);
+                    tvRemote.setVisibility(View.VISIBLE);
+                } else {
+                    tvRemote.setVisibility(View.GONE);
+                }
+            } else {
+                tvRemote.setVisibility(View.GONE);
+            }
         }
 
         ServerConfig nodeServer = null;
@@ -227,6 +282,12 @@ public class DashboardView {
             tvStatus.setTextColor(activity.getResources().getColor(R.color.matrix_phosphor));
             tvMetrics.setText(UiPresentationPolicy.formatHostRowMetrics(n));
             tvMetrics.setTextColor(activity.getResources().getColor(R.color.matrix_text_secondary));
+        } else if (n.status == NodeStatus.Status.UNKNOWN) {
+            tvStatus.setText("UNKNOWN");
+            tvStatus.setBackgroundResource(R.drawable.bg_chip_stopped);
+            tvStatus.setTextColor(activity.getResources().getColor(R.color.matrix_amber));
+            tvMetrics.setText(UiPresentationPolicy.formatHostRowMetrics(n));
+            tvMetrics.setTextColor(activity.getResources().getColor(R.color.matrix_amber));
         } else {
             tvStatus.setText("OFFLINE");
             tvStatus.setBackgroundResource(R.drawable.bg_chip_stopped);
@@ -266,7 +327,22 @@ public class DashboardView {
         Button btnShell = card.findViewById(R.id.btn_node_shell);
 
         if (tvName != null) tvName.setText(n.getDisplayName());
-        if (tvMeta != null) tvMeta.setText(UiPresentationPolicy.formatNodeMeta(n));
+        if (tvMeta != null) {
+            String metaText = UiPresentationPolicy.formatNodeMeta(n);
+            if (n.fetchedAt > 0) {
+                java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault());
+                String timeStr = sdf.format(new java.util.Date(n.fetchedAt));
+                if (n.isOnline()) {
+                    tvMeta.setText(metaText + " \u2022 " + timeStr);
+                } else if (n.status == NodeStatus.Status.UNKNOWN) {
+                    tvMeta.setText(metaText + " \u2022 stale as of " + timeStr);
+                } else {
+                    tvMeta.setText(metaText);
+                }
+            } else {
+                tvMeta.setText(metaText);
+            }
+        }
 
         ServerConfig nodeServer = null;
         try {
@@ -325,11 +401,22 @@ public class DashboardView {
             if (tvNet != null) tvNet.setText(UiPresentationPolicy.formatHostNet(n, isPdm));
         } else {
             if (tvStatus != null) {
-                tvStatus.setText("OFFLINE");
+                if (n.status == NodeStatus.Status.UNKNOWN) {
+                    tvStatus.setText("UNKNOWN");
+                } else {
+                    tvStatus.setText("OFFLINE");
+                }
                 tvStatus.setBackgroundResource(R.drawable.bg_chip_stopped);
                 tvStatus.setTextColor(activity.getResources().getColor(R.color.matrix_amber));
             }
-            if (tvOfflineMsg != null) tvOfflineMsg.setVisibility(View.VISIBLE);
+            if (tvOfflineMsg != null) {
+                if (n.status == NodeStatus.Status.UNKNOWN) {
+                    tvOfflineMsg.setText("Host is unreachable or remote reported error");
+                } else {
+                    tvOfflineMsg.setText(R.string.node_offline_msg);
+                }
+                tvOfflineMsg.setVisibility(View.VISIBLE);
+            }
             if (layoutMetrics != null) layoutMetrics.setVisibility(View.GONE);
         }
 

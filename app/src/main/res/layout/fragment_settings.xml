@@ -72,6 +72,100 @@
                 android:layout_marginBottom="16dp" />
 
 
+            <!-- Section 2: Telemetry Auto-Refresh Cadence -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/bg_card_matrix"
+                android:padding="16dp"
+                android:layout_marginBottom="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="TELEMETRY AUTO-REFRESH"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/matrix_phosphor"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Cadence target represents foreground polling frequency, not hypervisor data freshness. Upstream metrics (particularly on Proxmox Datacenter Manager) are gathered at PDM\'s internal collection cycle (~10s–30s)."
+                    android:textSize="11sp"
+                    android:textColor="@color/matrix_text_secondary"
+                    android:layout_marginBottom="12dp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/btn_refresh_off"
+                        android:layout_width="0dp"
+                        android:layout_height="@dimen/touch_target_min"
+                        android:layout_weight="1"
+                        android:text="Off"
+                        android:textSize="11sp"
+                        android:fontFamily="monospace"
+                        android:textColor="@color/matrix_text_secondary"
+                        android:background="@drawable/bg_btn_outline"
+                        android:layout_marginEnd="4dp" />
+
+                    <Button
+                        android:id="@+id/btn_refresh_5s"
+                        android:layout_width="0dp"
+                        android:layout_height="@dimen/touch_target_min"
+                        android:layout_weight="1"
+                        android:text="5s"
+                        android:textSize="11sp"
+                        android:fontFamily="monospace"
+                        android:textColor="@color/matrix_text_secondary"
+                        android:background="@drawable/bg_btn_outline"
+                        android:layout_marginEnd="4dp" />
+
+                    <Button
+                        android:id="@+id/btn_refresh_10s"
+                        android:layout_width="0dp"
+                        android:layout_height="@dimen/touch_target_min"
+                        android:layout_weight="1"
+                        android:text="10s"
+                        android:textSize="11sp"
+                        android:fontFamily="monospace"
+                        android:textColor="@color/matrix_obsidian"
+                        android:background="@drawable/bg_btn_phosphor"
+                        android:layout_marginEnd="4dp" />
+
+                    <Button
+                        android:id="@+id/btn_refresh_30s"
+                        android:layout_width="0dp"
+                        android:layout_height="@dimen/touch_target_min"
+                        android:layout_weight="1"
+                        android:text="30s"
+                        android:textSize="11sp"
+                        android:fontFamily="monospace"
+                        android:textColor="@color/matrix_text_secondary"
+                        android:background="@drawable/bg_btn_outline"
+                        android:layout_marginEnd="4dp" />
+
+                    <Button
+                        android:id="@+id/btn_refresh_60s"
+                        android:layout_width="0dp"
+                        android:layout_height="@dimen/touch_target_min"
+                        android:layout_weight="1"
+                        android:text="60s"
+                        android:textSize="11sp"
+                        android:fontFamily="monospace"
+                        android:textColor="@color/matrix_text_secondary"
+                        android:background="@drawable/bg_btn_outline" />
+                </LinearLayout>
+
+            </LinearLayout>
+
             <!-- Section 3: Security & Session -->
             <LinearLayout
                 android:layout_width="match_parent"
@@ -114,7 +208,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="PVE Pocket v0.1.1-alpha (GPL-3.0-or-later)\nInternal Package: com.homelabpocket (legacy namespace preserved for upgrade continuity)\nLocal Keystore Storage • Zero Analytics • Fully Open Source"
+                android:text="PVE Pocket v0.1.5-alpha (GPL-3.0-or-later)\nInternal Package: com.homelabpocket (legacy namespace preserved for upgrade continuity)\nLocal Keystore Storage • Zero Analytics • Fully Open Source"
                 android:textSize="11sp"
                 android:fontFamily="monospace"
                 android:textColor="@color/matrix_text_muted"

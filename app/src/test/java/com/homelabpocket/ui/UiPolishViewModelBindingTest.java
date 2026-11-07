@@ -11,6 +11,15 @@ import com.homelabpocket.model.StoragePool;
 import com.homelabpocket.ui.widget.RadialGaugeView;
 import com.homelabpocket.util.JsonUtil;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
 import org.junit.Test;
 
 import static org.junit.Assert.*;
@@ -941,5 +950,380 @@ public class UiPolishViewModelBindingTest {
                 UiPresentationPolicy.calculateFleetCapacity(null, guests);
         assertEquals("Running guests count", 0, summary.runningGuests);
         assertEquals("Stopped guests count must NOT include UNKNOWN", 0, summary.stoppedGuests);
+    }
+
+    @Test
+    public void testNodeMetricsBindingFreshAndStaleOnFailedStatus() {
+        ServerConfig pveServer = new ServerConfig(
+                "pve-1", "Main PVE", "pve.local", 8006,
+                ServerConfig.ServerType.PVE, "CC:DD");
+
+        NodeStatus node = new NodeStatus(
+                "pve-node1", "pve-1", NodeStatus.Status.ONLINE,
+                0.35, 8, 16_000_000_000L, 64_000_000_000L,
+                50_000_000_000L, 100_000_000_000L,
+                -1, -1, "8.1.4", 86400, 1000L);
+
+        // 1. Fresh binding (successful status): no stale indicators
+        UiPresentationPolicy.NodeMetricsBindingState freshState =
+                UiPresentationPolicy.evaluateNodeMetricsBinding(node, false, pveServer);
+
+        assertTrue("Fresh binding has data", freshState.hasData);
+        assertFalse("Fresh binding is not stale", freshState.isStale);
+        assertEquals("CPU: 35% (8 cores)", freshState.cpuText);
+        assertEquals(35, freshState.cpuPercent);
+        assertTrue(freshState.ramText.startsWith("RAM:"));
+        assertFalse("Fresh RAM text must not contain stale indicator", freshState.ramText.contains("stale"));
+        assertTrue(freshState.uptimeText.startsWith("Uptime:"));
+        assertFalse("Fresh Uptime text must not contain stale indicator", freshState.uptimeText.contains("stale"));
+        assertFalse("Fresh Root FS text must not contain stale indicator", freshState.diskText.contains("stale"));
+        assertEquals("Release: 8.1.4", freshState.releaseText);
+
+        // 2. Retained node metrics on failed status (isStale = true): clearly marked stale
+        UiPresentationPolicy.NodeMetricsBindingState staleState =
+                UiPresentationPolicy.evaluateNodeMetricsBinding(node, true, pveServer);
+
+        assertTrue("Stale binding retains data", staleState.hasData);
+        assertTrue("Stale binding is marked stale", staleState.isStale);
+        assertTrue("Stale CPU text clearly marked stale", staleState.cpuText.contains("(stale)"));
+        assertTrue("Stale RAM text clearly marked stale", staleState.ramText.contains("(stale)"));
+        assertTrue("Stale Uptime text clearly marked stale and showing cached data",
+                staleState.uptimeText.contains("(stale - showing cached data)"));
+        assertTrue("Stale Root FS text clearly marked stale", staleState.diskText.contains("(stale)"));
+
+        // 3. Telemetry unavailable (null node with no cache)
+        UiPresentationPolicy.NodeMetricsBindingState nullState =
+                UiPresentationPolicy.evaluateNodeMetricsBinding(null, true, pveServer);
+
+        assertFalse("Null node has no data", nullState.hasData);
+        assertTrue("Null CPU reports telemetry unavailable", nullState.cpuText.contains("telemetry unavailable"));
+        assertTrue("Null RAM reports telemetry unavailable", nullState.ramText.contains("telemetry unavailable"));
+        assertTrue("Null Uptime reports telemetry unavailable", nullState.uptimeText.contains("telemetry unavailable"));
+
+        // 4. Seam verification: successful rebind cleanses stale indicator completely
+        UiPresentationPolicy.NodeMetricsBindingState reboundState =
+                UiPresentationPolicy.evaluateNodeMetricsBinding(node, false, pveServer);
+        assertFalse("Rebound state must not be stale", reboundState.isStale);
+        assertFalse("Rebound CPU must not contain stale indicator", reboundState.cpuText.contains("stale"));
+        assertFalse("Rebound Uptime must not contain stale indicator", reboundState.uptimeText.contains("stale"));
+    }
+
+    @Test
+    public void testGuestMetricsBindingFreshAndStaleOnTelemetryFailure() {
+        ServerConfig pveServer = new ServerConfig(
+                "pve-1", "Main PVE", "pve.local", 8006,
+                ServerConfig.ServerType.PVE, "CC:DD");
+
+        GuestInfo runningGuest = new GuestInfo(
+                101, "vm-prod", GuestInfo.GuestType.QEMU, GuestInfo.RunState.RUNNING,
+                "pve-node1", "pve-1",
+                0.25, 4, 2_000_000_000L, 8_000_000_000L,
+                10_000_000_000L, 50_000_000_000L,
+                0, 0, 0, 0, 7200, "", false, 1000L);
+
+        // 1. Fresh binding (successful status): no stale indicators, power controls enabled
+        UiPresentationPolicy.GuestMetricsBindingState freshState =
+                UiPresentationPolicy.evaluateGuestMetricsBinding(runningGuest, false, pveServer, null);
+
+        assertTrue("Fresh binding has data", freshState.hasData);
+        assertFalse("Fresh binding is not stale", freshState.isStale);
+        assertEquals("RUNNING", freshState.statusText);
+        assertEquals("CPU: 25%", freshState.cpuText);
+        assertEquals(25, freshState.cpuPercent);
+        assertTrue(freshState.ramText.startsWith("RAM:"));
+        assertFalse("Fresh RAM must not be stale", freshState.ramText.contains("stale"));
+        assertTrue(freshState.diskText.startsWith("Disk:"));
+        assertFalse("Fresh Disk must not be stale", freshState.diskText.contains("stale"));
+        assertTrue(freshState.uptimeText.startsWith("Uptime:"));
+        assertTrue("Power card must be visible for fresh running guest", freshState.isPowerCardVisible);
+        assertTrue("Power controls enabled for fresh running guest", freshState.isPowerControlsEnabled);
+        assertTrue("Action confirmation allowed for fresh running guest", freshState.isActionConfirmationAllowed);
+
+        // 2. Retained guest metrics on telemetry failure (isStale = true): clearly marked stale, power controls disabled
+        UiPresentationPolicy.GuestMetricsBindingState staleState =
+                UiPresentationPolicy.evaluateGuestMetricsBinding(runningGuest, true, pveServer, "Connection refused");
+
+        assertTrue("Stale binding retains data", staleState.hasData);
+        assertTrue("Stale binding is marked stale", staleState.isStale);
+        assertEquals("UNKNOWN", staleState.statusText);
+        assertTrue("Stale CPU text clearly marked stale", staleState.cpuText.contains("(stale)"));
+        assertTrue("Stale RAM text clearly marked stale", staleState.ramText.contains("(stale)"));
+        assertTrue("Stale Disk text clearly marked stale", staleState.diskText.contains("(stale)"));
+        assertTrue("Stale Uptime text explains telemetry failure and cached data",
+                staleState.uptimeText.contains("Telemetry refresh failed (Connection refused - cached data)"));
+        assertFalse("Power card must be HIDDEN for stale guest", staleState.isPowerCardVisible);
+        assertFalse("Power controls must be DISABLED for stale guest", staleState.isPowerControlsEnabled);
+        assertFalse("Terminal must be HIDDEN for stale guest", staleState.isTerminalVisible);
+        assertFalse("Action confirmation must be BLOCKED for stale guest", staleState.isActionConfirmationAllowed);
+
+        // 3. Telemetry unavailable (null guest)
+        UiPresentationPolicy.GuestMetricsBindingState nullState =
+                UiPresentationPolicy.evaluateGuestMetricsBinding(null, true, pveServer, "Not found");
+
+        assertFalse("Null guest has no data", nullState.hasData);
+        assertTrue("Null CPU reports telemetry unavailable", nullState.cpuText.contains("telemetry unavailable"));
+        assertFalse("Power controls must be DISABLED for null guest", nullState.isPowerControlsEnabled);
+        assertFalse("Action confirmation must be BLOCKED for null guest", nullState.isActionConfirmationAllowed);
+
+        // 4. Seam verification: successful rebind cleanses stale indicator completely
+        UiPresentationPolicy.GuestMetricsBindingState reboundState =
+                UiPresentationPolicy.evaluateGuestMetricsBinding(runningGuest, false, pveServer, null);
+        assertFalse("Rebound state must not be stale", reboundState.isStale);
+        assertFalse("Rebound CPU must not contain stale indicator", reboundState.cpuText.contains("stale"));
+        assertTrue("Rebound state enables power controls", reboundState.isPowerControlsEnabled);
+        assertTrue("Rebound state allows action confirmation", reboundState.isActionConfirmationAllowed);
+    }
+
+    // =========================================================================
+    // 16. Fleet Cache Partial-Error Merge & Provenance Verification Tests
+    // =========================================================================
+
+    @Test
+    public void testFleetCachePartialErrorMergeRemovedServerPrunedAndFailurePreserved() {
+        // Setup initial server configurations: Server A and Server B
+        ServerConfig serverA = new ServerConfig("srv-a", "Server A", "192.0.2.1", 8006,
+                ServerConfig.ServerType.PVE, "AA:11", true, false);
+        ServerConfig serverB = new ServerConfig("srv-b", "Server B", "192.0.2.2", 8006,
+                ServerConfig.ServerType.PVE, "BB:22", true, false);
+
+        NodeStatus nodeA = new NodeStatus("node-a", "srv-a", NodeStatus.Status.ONLINE,
+                0.20, 4, 8_000_000_000L, 16_000_000_000L,
+                20_000_000_000L, 50_000_000_000L, 100, 200, "8.1.4", 3600, 1000L);
+        NodeStatus nodeB = new NodeStatus("node-b", "srv-b", NodeStatus.Status.ONLINE,
+                0.40, 8, 16_000_000_000L, 32_000_000_000L,
+                40_000_000_000L, 100_000_000_000L, 200, 400, "8.1.4", 7200, 1000L);
+
+        GuestInfo guestA = new GuestInfo(101, "vm-alpha", GuestInfo.GuestType.QEMU,
+                GuestInfo.RunState.RUNNING, "node-a", "srv-a", 0.15, 2, 2_000_000_000L,
+                4_000_000_000L, 0, 0, 0, 0, 3600, "", false, 1000L);
+        GuestInfo guestB = new GuestInfo(201, "vm-beta", GuestInfo.GuestType.QEMU,
+                GuestInfo.RunState.RUNNING, "node-b", "srv-b", 0.30, 4, 4_000_000_000L,
+                8_000_000_000L, 0, 0, 0, 0, 7200, "", false, 1000L);
+
+        List<NodeStatus> cachedNodes = Arrays.asList(nodeA, nodeB);
+        List<GuestInfo> cachedGuests = Arrays.asList(guestA, guestB);
+
+        Map<String, String> cachedProvenances = new HashMap<>();
+        cachedProvenances.put("srv-a", UiPresentationPolicy.computeServerProvenance(serverA));
+        cachedProvenances.put("srv-b", UiPresentationPolicy.computeServerProvenance(serverB));
+
+        // User removes Server A: configured servers now contains ONLY Server B
+        List<ServerConfig> configuredServers = Collections.singletonList(serverB);
+
+        // Fetch is executed: Server B fetch fails (e.g., connection refused or timeout)
+        String error = "Connection refused to Server B";
+        Set<String> successfulNodeServers = Collections.emptySet();
+        Set<String> successfulGuestServers = Collections.emptySet();
+        Set<String> successfulGuestNodeKeys = Collections.emptySet();
+
+        UiPresentationPolicy.FleetCacheMergeResult result = UiPresentationPolicy.mergeFleetData(
+                cachedNodes, cachedGuests, cachedProvenances, configuredServers,
+                Collections.emptyList(), Collections.emptyList(), error,
+                successfulNodeServers, successfulGuestServers, successfulGuestNodeKeys);
+
+        // Verify: Server A was removed, so its cached nodes and guests MUST be discarded
+        assertEquals("Merged nodes must only retain configured server that failed", 1, result.nodes.size());
+        assertEquals("Retained node must belong to Server B", "srv-b", result.nodes.get(0).serverId);
+        assertEquals("Retained node name must be node-b", "node-b", result.nodes.get(0).node);
+
+        assertEquals("Merged guests must only retain configured server that failed", 1, result.guests.size());
+        assertEquals("Retained guest must belong to Server B", "srv-b", result.guests.get(0).serverId);
+        assertEquals("Retained guest vmid must be 201", 201, result.guests.get(0).vmid);
+
+        // Verify provenances map
+        assertFalse("Removed server A must not exist in updated provenances", result.provenances.containsKey("srv-a"));
+        assertTrue("Configured failed server B must retain provenance", result.provenances.containsKey("srv-b"));
+    }
+
+    @Test
+    public void testFleetCachePartialErrorMergeSameIdEndpointReplacementInvalidatesOldCache() {
+        // Setup initial server configurations: Server A pointing to host1
+        ServerConfig serverA = new ServerConfig("srv-a", "Primary Lab", "192.0.2.10", 8006,
+                ServerConfig.ServerType.PVE, "AA:11:22", true, false);
+        ServerConfig serverB = new ServerConfig("srv-b", "Secondary Lab", "192.0.2.20", 8006,
+                ServerConfig.ServerType.PVE, "BB:33:44", true, false);
+
+        NodeStatus nodeAOld = new NodeStatus("host-old-a", "srv-a", NodeStatus.Status.ONLINE,
+                0.10, 2, 4_000_000_000L, 8_000_000_000L,
+                10_000_000_000L, 20_000_000_000L, 50, 100, "8.1.4", 1800, 1000L);
+        NodeStatus nodeB = new NodeStatus("host-b", "srv-b", NodeStatus.Status.ONLINE,
+                0.20, 4, 8_000_000_000L, 16_000_000_000L,
+                20_000_000_000L, 40_000_000_000L, 100, 200, "8.1.4", 3600, 1000L);
+
+        GuestInfo guestAOld = new GuestInfo(100, "old-vm", GuestInfo.GuestType.QEMU,
+                GuestInfo.RunState.RUNNING, "host-old-a", "srv-a", 0.05, 1, 1_000_000_000L,
+                2_000_000_000L, 0, 0, 0, 0, 1800, "", false, 1000L);
+        GuestInfo guestB = new GuestInfo(200, "live-vm", GuestInfo.GuestType.QEMU,
+                GuestInfo.RunState.RUNNING, "host-b", "srv-b", 0.10, 2, 2_000_000_000L,
+                4_000_000_000L, 0, 0, 0, 0, 3600, "", false, 1000L);
+
+        List<NodeStatus> cachedNodes = Arrays.asList(nodeAOld, nodeB);
+        List<GuestInfo> cachedGuests = Arrays.asList(guestAOld, guestB);
+
+        Map<String, String> cachedProvenances = new HashMap<>();
+        cachedProvenances.put("srv-a", UiPresentationPolicy.computeServerProvenance(serverA));
+        cachedProvenances.put("srv-b", UiPresentationPolicy.computeServerProvenance(serverB));
+
+        // Same-ID replacement: Server A is modified in Settings to point to host2 with new TLS pin
+        ServerConfig serverAReplaced = new ServerConfig("srv-a", "Primary Lab Migrated", "192.0.2.99", 8006,
+                ServerConfig.ServerType.PVE, "CC:55:66", true, false);
+
+        List<ServerConfig> configuredServers = Arrays.asList(serverAReplaced, serverB);
+
+        // Fetch execution: Server B succeeds, but migrated Server A endpoint fails (timeout / cert mismatch)
+        String error = "TLS handshake failed for Server A";
+        Set<String> successfulNodeServers = Collections.singleton("srv-b");
+        Set<String> successfulGuestServers = Collections.singleton("srv-b");
+        Set<String> successfulGuestNodeKeys = Collections.singleton("srv-b/host-b");
+
+        // Fresh data only contains Server B
+        List<NodeStatus> freshNodes = Collections.singletonList(nodeB);
+        List<GuestInfo> freshGuests = Collections.singletonList(guestB);
+
+        UiPresentationPolicy.FleetCacheMergeResult result = UiPresentationPolicy.mergeFleetData(
+                cachedNodes, cachedGuests, cachedProvenances, configuredServers,
+                freshNodes, freshGuests, error,
+                successfulNodeServers, successfulGuestServers, successfulGuestNodeKeys);
+
+        // Verify: Old cached data for "srv-a" had provenance from host1. Even though same ID,
+        // provenance changed, so old cached node and guest from host-old-a MUST NOT be retained!
+        assertEquals("Merged nodes must only contain Server B", 1, result.nodes.size());
+        assertEquals("Only Server B node remains", "srv-b", result.nodes.get(0).serverId);
+        assertEquals("Host name must be host-b", "host-b", result.nodes.get(0).node);
+
+        assertEquals("Merged guests must only contain Server B", 1, result.guests.size());
+        assertEquals("Only Server B guest remains", "srv-b", result.guests.get(0).serverId);
+        assertEquals("Guest vmid must be 200", 200, result.guests.get(0).vmid);
+
+        // Provenance for replaced server must NOT be set to old provenance
+        assertFalse("Replaced server with failed fetch must not retain old provenance",
+                cachedProvenances.get("srv-a").equals(result.provenances.get("srv-a")));
+    }
+
+    @Test
+    public void testFleetCacheAuthoritativeSuccessfulEmptyResultsPreserved() {
+        ServerConfig serverA = new ServerConfig("srv-a", "Cluster A", "192.0.2.1", 8006,
+                ServerConfig.ServerType.PVE, "AA:11", true, false);
+        List<ServerConfig> configuredServers = Collections.singletonList(serverA);
+
+        GuestInfo oldGuest1 = new GuestInfo(101, "vm-1", GuestInfo.GuestType.QEMU,
+                GuestInfo.RunState.RUNNING, "node-1", "srv-a", 0.1, 1, 1000L, 2000L, 0L, 0L, 0L, 0L, 1000L, "", false, 1000L);
+        GuestInfo oldGuest2 = new GuestInfo(102, "vm-2", GuestInfo.GuestType.LXC,
+                GuestInfo.RunState.STOPPED, "node-1", "srv-a", 0.0, 1, 0L, 1000L, 0L, 0L, 0L, 0L, 1000L, "", false, 1000L);
+
+        List<GuestInfo> cachedGuests = Arrays.asList(oldGuest1, oldGuest2);
+        Map<String, String> cachedProvenances = new HashMap<>();
+        cachedProvenances.put("srv-a", UiPresentationPolicy.computeServerProvenance(serverA));
+
+        // 1. Fetch succeeds cleanly with 0 guests (authoritative empty results on success)
+        UiPresentationPolicy.FleetCacheMergeResult successResult = UiPresentationPolicy.mergeFleetData(
+                Collections.emptyList(), cachedGuests, cachedProvenances, configuredServers,
+                Collections.emptyList(), Collections.emptyList(), null,
+                Collections.singleton("srv-a"), Collections.singleton("srv-a"), Collections.singleton("srv-a/node-1"));
+
+        assertEquals("Authoritative empty guests list must be preserved on success", 0, successResult.guests.size());
+
+        // 2. Partial fetch where Server A succeeds with 0 guests, while another configured server fails
+        ServerConfig serverB = new ServerConfig("srv-b", "Cluster B", "192.0.2.2", 8006,
+                ServerConfig.ServerType.PVE, "BB:22", true, false);
+        List<ServerConfig> multiServers = Arrays.asList(serverA, serverB);
+        cachedProvenances.put("srv-b", UiPresentationPolicy.computeServerProvenance(serverB));
+
+        Set<String> successfulGuestServers = Collections.singleton("srv-a"); // Server A succeeded with 0 guests
+        UiPresentationPolicy.FleetCacheMergeResult partialResult = UiPresentationPolicy.mergeFleetData(
+                Collections.emptyList(), cachedGuests, cachedProvenances, multiServers,
+                Collections.emptyList(), Collections.emptyList(), "Failed to reach Cluster B",
+                Collections.singleton("srv-a"), successfulGuestServers, Collections.singleton("srv-a/node-1"));
+
+        // Server A succeeded: its old cached guests must NOT be retained
+        boolean hasServerAGuests = false;
+        for (GuestInfo g : partialResult.guests) {
+            if ("srv-a".equals(g.serverId)) hasServerAGuests = true;
+        }
+        assertFalse("Successful server with 0 fresh guests must have authoritative empty result in cache", hasServerAGuests);
+    }
+
+    @Test
+    public void testFleetCacheFilterToConfiguredProvenanceOnConfigFingerprintChange() {
+        ServerConfig serverA = new ServerConfig("srv-a", "Server A", "192.0.2.1", 8006,
+                ServerConfig.ServerType.PVE, "AA:11", true, false);
+        ServerConfig serverB = new ServerConfig("srv-b", "Server B", "192.0.2.2", 8006,
+                ServerConfig.ServerType.PVE, "BB:22", true, false);
+
+        NodeStatus nodeA = new NodeStatus("node-a", "srv-a", NodeStatus.Status.ONLINE,
+                0.20, 4, 1000, 2000, 3000, 4000, 10, 20, "8.1.4", 1000, 1000L);
+        NodeStatus nodeB = new NodeStatus("node-b", "srv-b", NodeStatus.Status.ONLINE,
+                0.30, 8, 2000, 4000, 6000, 8000, 20, 40, "8.1.4", 2000, 1000L);
+
+        Map<String, String> cachedProvenances = new HashMap<>();
+        cachedProvenances.put("srv-a", UiPresentationPolicy.computeServerProvenance(serverA));
+        cachedProvenances.put("srv-b", UiPresentationPolicy.computeServerProvenance(serverB));
+
+        // When Server A is removed from configured servers:
+        List<ServerConfig> configuredServers = Collections.singletonList(serverB);
+        UiPresentationPolicy.FleetCacheMergeResult filtered = UiPresentationPolicy.filterCacheToConfiguredProvenance(
+                Arrays.asList(nodeA, nodeB), Collections.emptyList(), cachedProvenances, configuredServers);
+
+        assertEquals("Immediate filter on config change must remove nodeA", 1, filtered.nodes.size());
+        assertEquals("Retained node must be nodeB", "node-b", filtered.nodes.get(0).node);
+        assertFalse("Provenance for srv-a must be purged", filtered.provenances.containsKey("srv-a"));
+        assertTrue("Provenance for srv-b must be retained", filtered.provenances.containsKey("srv-b"));
+    }
+
+    // =========================================================================
+    // 17. Error Banner Presentation Helper Tests (NodesView & GuestsView)
+    // =========================================================================
+
+    @Test
+    public void testErrorBannerPresentationHelperForNodesAndGuestsViews() {
+        String errorMsg = "Failed to reach hypervisor endpoint";
+        long lastSuccessfulUpdate = 1700000000000L;
+
+        // 1. Error with retained data: MUST be clearly labeled 'stale / showing cached data'
+        UiPresentationPolicy.ErrorBannerState stateWithRetained =
+                UiPresentationPolicy.evaluateErrorBanner(errorMsg, true, lastSuccessfulUpdate);
+
+        assertTrue("Banner must be visible on error", stateWithRetained.isVisible);
+        assertTrue("State must indicate stale data is showing", stateWithRetained.isStale);
+        assertTrue("Banner text must be clearly labeled 'stale / showing cached data'",
+                stateWithRetained.bannerText.contains("stale / showing cached data"));
+        assertEquals("Failed to reach hypervisor endpoint (stale / showing cached data)", stateWithRetained.bannerText);
+        assertEquals("lastSuccessfulUpdate must be preserved", lastSuccessfulUpdate, stateWithRetained.lastSuccessfulUpdate);
+
+        // 2. Error without retained data (e.g. cold start failure): raw error, not stale
+        UiPresentationPolicy.ErrorBannerState stateNoRetained =
+                UiPresentationPolicy.evaluateErrorBanner(errorMsg, false, 0L);
+
+        assertTrue("Banner must be visible on error", stateNoRetained.isVisible);
+        assertFalse("State must not be marked stale when no data was retained", stateNoRetained.isStale);
+        assertFalse("Banner text must not contain stale indicator when no data was retained",
+                stateNoRetained.bannerText.contains("stale / showing cached data"));
+        assertEquals("Raw error text must be displayed directly", errorMsg, stateNoRetained.bannerText);
+
+        // 3. Successful refresh: error null or empty -> banner hidden, stale indicator cleared
+        UiPresentationPolicy.ErrorBannerState stateSuccessNull =
+                UiPresentationPolicy.evaluateErrorBanner(null, true, lastSuccessfulUpdate);
+        assertFalse("Banner must be hidden on success (null error)", stateSuccessNull.isVisible);
+        assertFalse("Banner must not be stale on success", stateSuccessNull.isStale);
+        assertEquals("", stateSuccessNull.bannerText);
+
+        UiPresentationPolicy.ErrorBannerState stateSuccessEmpty =
+                UiPresentationPolicy.evaluateErrorBanner("", true, lastSuccessfulUpdate);
+        assertFalse("Banner must be hidden on success (empty error)", stateSuccessEmpty.isVisible);
+        assertFalse("Banner must not be stale on success", stateSuccessEmpty.isStale);
+        assertEquals("", stateSuccessEmpty.bannerText);
+
+        // 4. Partial failure representation: some data retained, error reported
+        String partialError = "Host node-2: Telemetry timeout";
+        UiPresentationPolicy.ErrorBannerState partialState =
+                UiPresentationPolicy.evaluateErrorBanner(partialError, true, lastSuccessfulUpdate);
+        assertTrue("Partial error with retained data must be visible", partialState.isVisible);
+        assertTrue("Partial error with retained data must be marked stale", partialState.isStale);
+        assertTrue("Partial error must clearly label banner 'stale / showing cached data'",
+                partialState.bannerText.contains("stale / showing cached data"));
+
+        // 5. Verification: formatErrorBanner matches evaluateErrorBanner text
+        assertEquals(partialState.bannerText, UiPresentationPolicy.formatErrorBanner(partialError, true));
+        assertEquals(partialState.bannerText, UiPresentationPolicy.formatErrorBanner(partialError, true, lastSuccessfulUpdate));
     }
 }

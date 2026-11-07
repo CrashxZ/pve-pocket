@@ -15,6 +15,7 @@ import android.widget.Toast;
 import com.homelabpocket.HomelabApp;
 import com.homelabpocket.R;
 import com.homelabpocket.model.ServerConfig;
+import com.homelabpocket.scheduler.RefreshPreferenceStore;
 import com.homelabpocket.security.TlsVerificationStatus;
 import com.homelabpocket.ui.MainActivity;
 
@@ -29,6 +30,12 @@ public class SettingsView {
     private final LinearLayout layoutServerList;
     private final Button btnLockSession;
 
+    private final Button btnRefreshOff;
+    private final Button btnRefresh5s;
+    private final Button btnRefresh10s;
+    private final Button btnRefresh30s;
+    private final Button btnRefresh60s;
+
     public SettingsView(MainActivity activity) {
         this.activity = activity;
         this.root = LayoutInflater.from(activity).inflate(R.layout.fragment_settings, null);
@@ -36,6 +43,12 @@ public class SettingsView {
         btnAddServer = root.findViewById(R.id.btn_add_server);
         layoutServerList = root.findViewById(R.id.layout_server_list);
         btnLockSession = root.findViewById(R.id.btn_lock_session);
+
+        btnRefreshOff = root.findViewById(R.id.btn_refresh_off);
+        btnRefresh5s = root.findViewById(R.id.btn_refresh_5s);
+        btnRefresh10s = root.findViewById(R.id.btn_refresh_10s);
+        btnRefresh30s = root.findViewById(R.id.btn_refresh_30s);
+        btnRefresh60s = root.findViewById(R.id.btn_refresh_60s);
 
         setupListeners();
     }
@@ -50,11 +63,30 @@ public class SettingsView {
             activity.startActivityForResult(intent, MainActivity.REQ_ADD_SERVER);
         });
 
+        if (btnRefreshOff != null) {
+            btnRefreshOff.setOnClickListener(v -> setRefreshInterval(RefreshPreferenceStore.INTERVAL_OFF));
+        }
+        if (btnRefresh5s != null) {
+            btnRefresh5s.setOnClickListener(v -> setRefreshInterval(RefreshPreferenceStore.INTERVAL_5S));
+        }
+        if (btnRefresh10s != null) {
+            btnRefresh10s.setOnClickListener(v -> setRefreshInterval(RefreshPreferenceStore.INTERVAL_10S));
+        }
+        if (btnRefresh30s != null) {
+            btnRefresh30s.setOnClickListener(v -> setRefreshInterval(RefreshPreferenceStore.INTERVAL_30S));
+        }
+        if (btnRefresh60s != null) {
+            btnRefresh60s.setOnClickListener(v -> setRefreshInterval(RefreshPreferenceStore.INTERVAL_60S));
+        }
+
         btnLockSession.setOnClickListener(v -> {
             if (HomelabApp.getInstance().getSessionManager().isLocked()) {
                 promptUnlock();
             } else {
                 boolean persisted = HomelabApp.getInstance().getSessionManager().lock();
+                if (activity.getScheduler() != null) {
+                    activity.getScheduler().setSessionLocked(true);
+                }
                 render();
                 activity.refreshData();
                 if (persisted) {
@@ -100,7 +132,45 @@ public class SettingsView {
                 .show();
     }
 
+    private void setRefreshInterval(int seconds) {
+        if (HomelabApp.getInstance() != null && HomelabApp.getInstance().getRefreshPreferenceStore() != null) {
+            boolean success = HomelabApp.getInstance().getRefreshPreferenceStore().setRefreshIntervalSeconds(seconds);
+            renderRefreshCadenceButtons();
+            if (success) {
+                Toast.makeText(activity, "Auto-refresh cadence set to: " + (seconds == 0 ? "Off (Manual only)" : (seconds + "s")), Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(activity, "Failed to persist refresh interval preference.", Toast.LENGTH_LONG).show();
+            }
+        }
+    }
+
+    private void renderRefreshCadenceButtons() {
+        int currentInterval = RefreshPreferenceStore.DEFAULT_INTERVAL_SECONDS;
+        if (HomelabApp.getInstance() != null && HomelabApp.getInstance().getRefreshPreferenceStore() != null) {
+            currentInterval = HomelabApp.getInstance().getRefreshPreferenceStore().getRefreshIntervalSeconds();
+        }
+
+        updateCadenceButton(btnRefreshOff, currentInterval == RefreshPreferenceStore.INTERVAL_OFF);
+        updateCadenceButton(btnRefresh5s, currentInterval == RefreshPreferenceStore.INTERVAL_5S);
+        updateCadenceButton(btnRefresh10s, currentInterval == RefreshPreferenceStore.INTERVAL_10S);
+        updateCadenceButton(btnRefresh30s, currentInterval == RefreshPreferenceStore.INTERVAL_30S);
+        updateCadenceButton(btnRefresh60s, currentInterval == RefreshPreferenceStore.INTERVAL_60S);
+    }
+
+    private void updateCadenceButton(Button btn, boolean selected) {
+        if (btn == null) return;
+        if (selected) {
+            btn.setBackgroundResource(R.drawable.bg_btn_phosphor);
+            btn.setTextColor(activity.getResources().getColor(R.color.matrix_obsidian));
+        } else {
+            btn.setBackgroundResource(R.drawable.bg_btn_outline);
+            btn.setTextColor(activity.getResources().getColor(R.color.matrix_text_secondary));
+        }
+    }
+
     public void render() {
+        renderRefreshCadenceButtons();
+
         boolean locked = HomelabApp.getInstance().getSessionManager().isLocked();
         if (locked) {
             btnLockSession.setText("Unlock Session 🔓");

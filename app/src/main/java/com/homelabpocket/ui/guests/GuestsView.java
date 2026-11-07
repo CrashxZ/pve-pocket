@@ -21,6 +21,7 @@ import android.widget.Toast;
 
 import com.homelabpocket.HomelabApp;
 import com.homelabpocket.R;
+import com.homelabpocket.ui.UiPresentationPolicy;
 import com.homelabpocket.api.ApiException;
 import com.homelabpocket.api.FavoritesStore;
 import com.homelabpocket.api.PdmApiDriver;
@@ -30,6 +31,7 @@ import com.homelabpocket.model.GuestInfo;
 import com.homelabpocket.model.ServerConfig;
 import com.homelabpocket.model.TaskResult;
 import com.homelabpocket.ui.MainActivity;
+import com.homelabpocket.ui.UiPresentationPolicy;
 import com.homelabpocket.ui.terminal.TerminalActivity;
 import com.homelabpocket.ui.vms.VmDetailActivity;
 import com.homelabpocket.util.JsonUtil;
@@ -46,17 +48,50 @@ public class GuestsView {
     private final Button btnRefresh;
     private final EditText etSearch;
     private final Button btnFilterAll;
+    private com.homelabpocket.ui.UiPresentationPolicy.ActionCallerTransitionState lastAcknowledgedAction;
+
+    public void setLastAcknowledgedAction(com.homelabpocket.ui.UiPresentationPolicy.ActionCallerTransitionState ack) {
+        this.lastAcknowledgedAction = ack;
+    }
+
+    public com.homelabpocket.ui.UiPresentationPolicy.ActionCallerTransitionState getLastAcknowledgedAction() {
+        return lastAcknowledgedAction;
+    }
+
+    public String getLastError() {
+        return lastError;
+    }
+
+    public TextView getErrorTextView() {
+        return tvError;
+    }
     private final Button btnFilterRunning;
     private final Button btnFilterStopped;
     private final Button btnFilterFavs;
     private final TextView tvError;
     private final LinearLayout layoutGuests;
     private final LinearLayout layoutEmptyGuests;
+    private final android.widget.ScrollView scrollGuests;
 
     private int activeFilter = 0; // 0=All, 1=Running, 2=Stopped, 3=Favs
     private String currentSearchQuery = "";
     private List<GuestInfo> lastGuestList = new ArrayList<>();
     private PowerActionTask currentPowerTask;
+    private int activeConfirmationCount = 0;
+    private long lastSuccessfulUpdate = 0;
+    private String lastError = null;
+
+    public long getLastSuccessfulUpdate() {
+        return lastSuccessfulUpdate;
+    }
+
+    public boolean isPowerOperationActive() {
+        return (currentPowerTask != null && !currentPowerTask.isFinished()) || activeConfirmationCount > 0;
+    }
+
+    public boolean isConfirmationShowing() {
+        return activeConfirmationCount > 0;
+    }
 
     public void cancelActiveTasks() {
         if (currentPowerTask != null) {
@@ -80,6 +115,7 @@ public class GuestsView {
         tvError = root.findViewById(R.id.tv_error);
         layoutGuests = root.findViewById(R.id.layout_guests);
         layoutEmptyGuests = root.findViewById(R.id.layout_empty_guests);
+        scrollGuests = root.findViewById(R.id.scroll_guests);
 
         setupListeners();
     }
@@ -135,19 +171,44 @@ public class GuestsView {
     }
 
     public void render(List<GuestInfo> guests, boolean isLoading, String error) {
+        render(guests, isLoading, error, this.lastSuccessfulUpdate);
+    }
+
+    public void render(List<GuestInfo> guests, boolean isLoading, String error, long lastSuccessfulUpdate) {
+        this.lastSuccessfulUpdate = lastSuccessfulUpdate;
+        this.lastError = error;
         this.lastGuestList = guests != null ? guests : new ArrayList<>();
 
-        if (error != null && !error.isEmpty()) {
+        boolean hasLive = false;
+        if (lastGuestList != null) {
+            for (GuestInfo g : lastGuestList) {
+                if (g.state == GuestInfo.RunState.RUNNING || g.state == GuestInfo.RunState.STOPPED) {
+                    hasLive = true;
+                    break;
+                }
+            }
+        }
+        boolean hasRetainedGuests = !lastGuestList.isEmpty();
+        UiPresentationPolicy.ErrorBannerState bannerState =
+                UiPresentationPolicy.evaluateErrorBanner(error, hasRetainedGuests, lastSuccessfulUpdate, hasLive);
+
+        if (bannerState.isVisible) {
             tvError.setVisibility(View.VISIBLE);
-            tvError.setText(error);
+            tvError.setText(bannerState.bannerText);
         } else {
             tvError.setVisibility(View.GONE);
+        }
+
+        // Defer recreating cards and preserve UI state while power operation is active
+        if (isPowerOperationActive()) {
+            return;
         }
 
         applyFiltersAndRender();
     }
 
     private void applyFiltersAndRender() {
+        final int scrollY = scrollGuests != null ? scrollGuests.getScrollY() : 0;
         layoutGuests.removeAllViews();
         FavoritesStore favStore = HomelabApp.getInstance().getFavoritesStore();
 
@@ -170,6 +231,20 @@ public class GuestsView {
 
         if (filtered.isEmpty()) {
             layoutEmptyGuests.setVisibility(View.VISIBLE);
+            TextView tvEmptyTitle = layoutEmptyGuests.findViewById(R.id.tv_empty_guests_title);
+            TextView tvEmptyDesc = layoutEmptyGuests.findViewById(R.id.tv_empty_guests_desc);
+            if (tvEmptyTitle != null && tvEmptyDesc != null) {
+                if (lastGuestList.isEmpty() && (lastError != null && !lastError.isEmpty())) {
+                    tvEmptyTitle.setText("Guest Telemetry Unavailable");
+                    tvEmptyDesc.setText(lastError + " (showing cached data for unreachable remotes)");
+                } else if (lastGuestList.isEmpty() && lastSuccessfulUpdate == 0) {
+                    tvEmptyTitle.setText("Guest Telemetry Unavailable");
+                    tvEmptyDesc.setText("Unable to retrieve guest inventory from unreachable endpoints or remotes.");
+                } else {
+                    tvEmptyTitle.setText(R.string.empty_guests_title);
+                    tvEmptyDesc.setText(R.string.empty_guests_desc);
+                }
+            }
         } else {
             layoutEmptyGuests.setVisibility(View.GONE);
             for (GuestInfo g : filtered) {
@@ -177,6 +252,10 @@ public class GuestsView {
                 populateGuestCard(card, g);
                 layoutGuests.addView(card);
             }
+        }
+
+        if (scrollGuests != null && scrollY > 0) {
+            scrollGuests.post(() -> scrollGuests.scrollTo(0, scrollY));
         }
     }
 
@@ -202,7 +281,18 @@ public class GuestsView {
 
         // Name & Identity
         tvName.setText(g.name);
-        tvVmidNode.setText(com.homelabpocket.ui.UiPresentationPolicy.formatGuestHostLabel(g));
+        String hostLabel = com.homelabpocket.ui.UiPresentationPolicy.formatGuestHostLabel(g);
+        String timeSuffix = "";
+        if (g.fetchedAt > 0) {
+            java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault());
+            String timeStr = sdf.format(new java.util.Date(g.fetchedAt));
+            if (g.state == GuestInfo.RunState.UNKNOWN) {
+                timeSuffix = " \u2022 stale as of " + timeStr;
+            } else {
+                timeSuffix = " \u2022 " + timeStr;
+            }
+        }
+        tvVmidNode.setText(hostLabel + timeSuffix);
 
         // Type Badge
         if (g.type == GuestInfo.GuestType.LXC) {
@@ -254,7 +344,7 @@ public class GuestsView {
         } else {
             tvStatus.setText("UNKNOWN");
             tvStatus.setBackgroundResource(R.drawable.bg_chip_stopped);
-            tvStatus.setTextColor(activity.getResources().getColor(R.color.matrix_text_muted));
+            tvStatus.setTextColor(activity.getResources().getColor(R.color.matrix_amber));
             layoutMetrics.setVisibility(View.GONE);
 
             btnStart.setVisibility(View.GONE);
@@ -378,22 +468,37 @@ public class GuestsView {
         msg.append("• VMID: ").append(g.vmid).append("\n");
         msg.append("• Name: ").append(g.name);
 
-        new AlertDialog.Builder(activity)
+        AlertDialog confirmDialog = new AlertDialog.Builder(activity)
                 .setTitle(actionTitle)
                 .setMessage(msg.toString())
                 .setPositiveButton(actionVerb, (dialog, which) -> executePowerAction(g, action))
                 .setNegativeButton("Cancel", null)
-                .show();
+                .create();
+        confirmDialog.setOnDismissListener(dialog -> activeConfirmationCount = Math.max(0, activeConfirmationCount - 1));
+        activeConfirmationCount++;
+        confirmDialog.show();
+    }
+
+    public static boolean preflightActionCheck(GuestInfo g, String expectedNode, int expectedVmid, GuestInfo.GuestType expectedType, boolean isSessionLocked) {
+        return preflightActionCheck(g, expectedNode, expectedVmid, expectedType, false, isSessionLocked);
+    }
+
+    public static boolean preflightActionCheck(GuestInfo g, String expectedNode, int expectedVmid, GuestInfo.GuestType expectedType, boolean isGuestMetricsStale, boolean isSessionLocked) {
+        if (isSessionLocked) return false;
+        if (g == null || g.vmid <= 0 || g.node == null || g.node.trim().isEmpty() || g.type == null || isGuestMetricsStale) return false;
+        return com.homelabpocket.ui.UiPresentationPolicy.isGuestTargetValid(g, expectedNode, expectedVmid, expectedType);
     }
 
     private void confirmForceStop(GuestInfo g, boolean isPdm) {
-        if (g == null || g.state == GuestInfo.RunState.UNKNOWN || !com.homelabpocket.ui.UiPresentationPolicy.isGuestTargetValid(g, g.node, g.vmid, g.type)) {
-            Toast.makeText(activity, "Action blocked: Target not verified, moved, or offline. Please refresh.", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        if (HomelabApp.getInstance().getSessionManager().isLocked()) {
-            Toast.makeText(activity, "Action blocked: Session is locked. Please unlock in Settings first.", Toast.LENGTH_LONG).show();
+        boolean sessionLocked = HomelabApp.getInstance().getSessionManager().isLocked();
+        if (!preflightActionCheck(g, g != null ? g.node : null, g != null ? g.vmid : 0, g != null ? g.type : null, sessionLocked)) {
+            if (g == null || g.vmid <= 0 || g.node == null || g.node.trim().isEmpty() || g.type == null) {
+                Toast.makeText(activity, "Action blocked: Invalid guest target.", Toast.LENGTH_SHORT).show();
+            } else if (sessionLocked) {
+                Toast.makeText(activity, "Action blocked: Session is locked. Please unlock in Settings first.", Toast.LENGTH_LONG).show();
+            } else {
+                Toast.makeText(activity, "Action blocked: Target not verified, moved, or offline. Please refresh.", Toast.LENGTH_SHORT).show();
+            }
             return;
         }
 
@@ -418,7 +523,7 @@ public class GuestsView {
         warnMsg.append("• Name: ").append(g.name).append("\n\n");
         warnMsg.append("Do you want to proceed to the second confirmation?");
 
-        new AlertDialog.Builder(activity)
+        AlertDialog warnDialog = new AlertDialog.Builder(activity)
                 .setTitle("Warning: Force Stop")
                 .setMessage(warnMsg.toString())
                 .setPositiveButton("Proceed...", (dialog, which) -> {
@@ -426,11 +531,14 @@ public class GuestsView {
                     showSecondForceStopConfirmation(g, isPdm, remote, node, serverName, guestTypeName);
                 })
                 .setNegativeButton("Cancel", null)
-                .show();
+                .create();
+        warnDialog.setOnDismissListener(dialog -> activeConfirmationCount = Math.max(0, activeConfirmationCount - 1));
+        activeConfirmationCount++;
+        warnDialog.show();
     }
 
     private void showSecondForceStopConfirmation(GuestInfo g, boolean isPdm, String remote, String node, String serverName, String guestTypeName) {
-        new AlertDialog.Builder(activity)
+        AlertDialog secondDialog = new AlertDialog.Builder(activity)
                 .setTitle("Second Confirmation: Force Stop")
                 .setMessage("Are you ABSOLUTELY SURE you want to force stop " + guestTypeName + " " + g.vmid + " (" + g.name + ")?\n\n"
                         + "This immediate power-kill action cannot be undone.\n\n"
@@ -439,7 +547,10 @@ public class GuestsView {
                         + "• Server: " + serverName)
                 .setPositiveButton("Force Stop (Kill)", (dialog, which) -> executePowerAction(g, "stop"))
                 .setNegativeButton("Cancel", null)
-                .show();
+                .create();
+        secondDialog.setOnDismissListener(dialog -> activeConfirmationCount = Math.max(0, activeConfirmationCount - 1));
+        activeConfirmationCount++;
+        secondDialog.show();
     }
 
     private void showQemuConsoleDisclosure(GuestInfo g) {
@@ -487,20 +598,16 @@ public class GuestsView {
         dialog.show();
     }
 
-    private void executePowerAction(GuestInfo g, String action) {
-        if (g == null || g.vmid <= 0 || g.node == null || g.node.trim().isEmpty() || g.type == null) {
-            Toast.makeText(activity, "Action blocked: Invalid guest target.", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        if (!com.homelabpocket.ui.UiPresentationPolicy.isGuestTargetValid(g, g.node, g.vmid, g.type)) {
-            Toast.makeText(activity, "Action blocked: Target not verified, moved, or offline. Please refresh.", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        // Enforce session lock before action
-        if (HomelabApp.getInstance().getSessionManager().isLocked()) {
-            Toast.makeText(activity, "Action blocked: Session is locked. Please unlock in Settings first.", Toast.LENGTH_LONG).show();
+    public void executePowerAction(GuestInfo g, String action) {
+        boolean sessionLocked = HomelabApp.getInstance().getSessionManager().isLocked();
+        if (!preflightActionCheck(g, g != null ? g.node : null, g != null ? g.vmid : 0, g != null ? g.type : null, sessionLocked)) {
+            if (g == null || g.vmid <= 0 || g.node == null || g.node.trim().isEmpty() || g.type == null) {
+                Toast.makeText(activity, "Action blocked: Invalid guest target.", Toast.LENGTH_SHORT).show();
+            } else if (sessionLocked) {
+                Toast.makeText(activity, "Action blocked: Session is locked. Please unlock in Settings first.", Toast.LENGTH_LONG).show();
+            } else {
+                Toast.makeText(activity, "Action blocked: Target not verified, moved, or offline. Please refresh.", Toast.LENGTH_SHORT).show();
+            }
             return;
         }
 
@@ -520,19 +627,24 @@ public class GuestsView {
         currentPowerTask.execute();
     }
 
-    private class PowerActionTask extends AsyncTask<Void, TaskResult, TaskResult> {
+    public class PowerActionTask extends AsyncTask<Void, TaskResult, TaskResult> {
         private final GuestInfo guest;
         private final ServerConfig server;
         private final String action;
         private final com.homelabpocket.api.ActionGuard.TaskLifecycleOwner lifecycleOwner;
         private ProgressDialog progressDialog;
         private String errorMessage;
+        private volatile boolean finished = false;
 
-        PowerActionTask(GuestInfo guest, ServerConfig server, String action, com.homelabpocket.api.ActionGuard.TaskLifecycleOwner lifecycleOwner) {
+        public PowerActionTask(GuestInfo guest, ServerConfig server, String action, com.homelabpocket.api.ActionGuard.TaskLifecycleOwner lifecycleOwner) {
             this.guest = guest;
             this.server = server;
             this.action = action;
             this.lifecycleOwner = lifecycleOwner;
+        }
+
+        public boolean isFinished() {
+            return finished;
         }
 
         void releaseGuardOnce() {
@@ -561,7 +673,7 @@ public class GuestsView {
         }
 
         @Override
-        protected TaskResult doInBackground(Void... voids) {
+        public TaskResult doInBackground(Void... voids) {
             HomelabApp app = HomelabApp.getInstance();
             try {
                 if (lifecycleOwner != null) {
@@ -807,7 +919,8 @@ public class GuestsView {
         }
 
         @Override
-        protected void onPostExecute(TaskResult result) {
+        public void onPostExecute(TaskResult result) {
+            finished = true;
             releaseGuardOnce();
             if (progressDialog != null && progressDialog.isShowing()) {
                 progressDialog.dismiss();
@@ -816,60 +929,32 @@ public class GuestsView {
             String serverName = server != null ? server.name : guest.serverId;
             String targetInfo = guest.type.name() + " " + guest.vmid + " (" + guest.name + ") on " + guest.node + " [" + serverName + "]";
 
-            if (result != null) {
-                switch (result.state) {
-                    case OK:
-                        Toast.makeText(activity, "Success: " + action + " completed for " + targetInfo, Toast.LENGTH_SHORT).show();
-                        break;
-                    case ERROR:
-                        new AlertDialog.Builder(activity)
-                                .setTitle("Task Failed")
-                                .setMessage("Operation '" + action + "' failed on Proxmox.\n\n"
-                                        + "Target: " + targetInfo + "\n\n"
-                                        + "Details: " + (result.exitStatus != null ? result.exitStatus : "Unknown error"))
-                                .setPositiveButton("OK", null)
-                                .show();
-                        break;
-                    case TIMEOUT:
-                        new AlertDialog.Builder(activity)
-                                .setTitle("Task Timed Out")
-                                .setMessage("Operation '" + action + "' did not complete within the 60s timeout.\n\n"
-                                        + "Target: " + targetInfo + "\n\n"
-                                        + "Details: " + result.getSummary())
-                                .setPositiveButton("OK", null)
-                                .show();
-                        break;
-                    case UNKNOWN:
-                    default:
-                        new AlertDialog.Builder(activity)
-                                .setTitle("Task Status Unknown")
-                                .setMessage("Operation '" + action + "' returned indeterminate status.\n\n"
-                                        + "Target: " + targetInfo + "\n\n"
-                                        + "Details: " + result.getSummary())
-                                .setPositiveButton("OK", null)
-                                .show();
-                        break;
-                }
-            } else if (errorMessage != null) {
+            com.homelabpocket.ui.UiPresentationPolicy.ActionCallerTransitionState transition =
+                    transitionCallerAction(result, action, targetInfo, errorMessage,
+                            () -> activity.requestPostOperationRefresh());
+
+            GuestsView.this.lastAcknowledgedAction = transition;
+            if (transition.presentation.type == com.homelabpocket.ui.UiPresentationPolicy.TaskResultPresentation.DialogType.TOAST_SUCCESS) {
+                Toast.makeText(activity, transition.presentation.message, Toast.LENGTH_SHORT).show();
+            } else {
                 new AlertDialog.Builder(activity)
-                        .setTitle("Operation Error")
-                        .setMessage("Failed to execute '" + action + "' on " + targetInfo + ":\n\n" + errorMessage)
+                        .setTitle(transition.presentation.title)
+                        .setMessage(transition.presentation.message)
                         .setPositiveButton("OK", null)
                         .show();
             }
-
-            activity.refreshData();
         }
 
         @Override
         protected void onCancelled(TaskResult result) {
+            finished = true;
             releaseGuardOnce();
             try {
                 if (progressDialog != null && progressDialog.isShowing()) {
                     progressDialog.dismiss();
                 }
                 Toast.makeText(activity, "Operation cancelled: " + action + " on " + (guest != null ? guest.name : ""), Toast.LENGTH_SHORT).show();
-                activity.refreshData();
+                activity.requestPostOperationRefresh();
             } catch (Throwable ignored) {}
         }
 
@@ -878,5 +963,16 @@ public class GuestsView {
             releaseGuardOnce();
             onCancelled(null);
         }
+    }
+
+    /**
+     * Package-private caller transition seam wired to production PowerActionTask.onPostExecute.
+     * Can be invoked directly in behavioral unit tests to verify caller state transitions and isolation.
+     */
+    public static com.homelabpocket.ui.UiPresentationPolicy.ActionCallerTransitionState transitionCallerAction(
+            TaskResult result, String action, String targetInfo, String errorMessage,
+            com.homelabpocket.ui.UiPresentationPolicy.PostRefreshTrigger refreshTrigger) {
+        return com.homelabpocket.ui.UiPresentationPolicy.performActionCompletionTransition(
+                result, action, targetInfo, errorMessage, refreshTrigger);
     }
 }

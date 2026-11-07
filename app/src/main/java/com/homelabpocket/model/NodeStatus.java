@@ -53,6 +53,9 @@ public class NodeStatus {
     /** Timestamp when this data was fetched (System.currentTimeMillis) */
     public final long fetchedAt;
 
+    /** Indicates whether this node is a synthetic placeholder for an unreachable remote group with unknown host count */
+    public final boolean isRemotePlaceholder;
+
     public NodeStatus(String node, String serverId, Status status,
                       double cpuUsage, int cpuCount,
                       long memUsed, long memTotal,
@@ -60,6 +63,17 @@ public class NodeStatus {
                       long netIn, long netOut,
                       String pveVersion, long uptime,
                       long fetchedAt) {
+        this(node, serverId, status, cpuUsage, cpuCount, memUsed, memTotal,
+                diskUsed, diskTotal, netIn, netOut, pveVersion, uptime, fetchedAt, false);
+    }
+
+    public NodeStatus(String node, String serverId, Status status,
+                      double cpuUsage, int cpuCount,
+                      long memUsed, long memTotal,
+                      long diskUsed, long diskTotal,
+                      long netIn, long netOut,
+                      String pveVersion, long uptime,
+                      long fetchedAt, boolean isRemotePlaceholder) {
         this.node = node;
         this.serverId = serverId;
         this.status = status;
@@ -74,13 +88,21 @@ public class NodeStatus {
         this.pveVersion = pveVersion;
         this.uptime = uptime;
         this.fetchedAt = fetchedAt;
+        this.isRemotePlaceholder = isRemotePlaceholder;
     }
 
     /** Creates an offline placeholder for a known node */
     public static NodeStatus offline(String node, String serverId) {
         return new NodeStatus(node, serverId, Status.OFFLINE,
                 Double.NaN, 0, -1, -1, -1, -1, -1, -1, null, -1,
-                System.currentTimeMillis());
+                System.currentTimeMillis(), false);
+    }
+
+    /** Creates an unknown remote placeholder for an unreachable remote cluster group */
+    public static NodeStatus remotePlaceholder(String remote, String serverId) {
+        return new NodeStatus(remote, serverId, Status.UNKNOWN,
+                Double.NaN, 0, -1L, -1L, -1L, -1L, -1L, -1L, null, -1L,
+                0L, true);
     }
 
     public boolean isOnline() {

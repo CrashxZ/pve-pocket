@@ -2,6 +2,24 @@
 
 This document outlines shipped features and future development priorities for PVE Pocket.
 
+## In Progress / Candidate (v0.1.5-alpha)
+
+- **Field Failure Repairs & Task Semantics Alignment:**
+  - Upstream Proxmox Task Status `WARNINGS: n` terminal classification: accurately classifies non-fatal warning completions (`exitstatus: "WARNINGS: 1"`) as success across PVE and PDM drivers, replacing erroneous "Task Failed" alerts with informative "Task Completed with Warnings" dialogs.
+  - Node Detail Telemetry & Sibling Failure Resilience: `NodeDetailActivity` fetches unified fleet resources in a single HTTP roundtrip instead of serial redundant calls, executes on thread pool with task cancellation on pause/resume, isolates slow/offline siblings (`remote-2` "No route to host"), and renders explicit unavailable state without fake zero metrics (`CPU: 0.0%`, `RAM: 0/0`).
+  - Truthful Ack Isolation & Lagging Cache Handling: Distinguishes completed tasks from subsequent background telemetry errors or lagging PDM cache, preventing fresh acknowledged actions from being falsely flagged as stopped or failed.
+  - Fail-closed mutation preflight on selected unreachable remotes: Zero POST dispatches to offline/unreachable nodes.
+
+## Prior Candidate (v0.1.4-alpha)
+
+- **Foreground Lifecycle-Aware Telemetry Auto-Refresh:**
+  - Configurable auto-refresh cadence: Off, 5s, 10s (default recommended), 30s, 60s, persisted as a non-secret global preference.
+  - Cadence target disclosure: The setting is a client polling cadence target, not measured hypervisor API freshness; upstream PDM metric collection cycles (~10s–30s) may limit true freshness.
+  - Foreground-only lifecycle awareness: Automatically pauses when backgrounded, screen off, keyguard locked, session locked, or Settings tab selected. Zero background services or wake locks.
+  - Completion-relative interval scheduling (no overlap, coalesced manual refresh).
+  - Deferral during power operations preserving cards, dialogs, and task tracking.
+  - Bounded exponential backoff on errors (30s then 60s max) keeping previous telemetry stale without auth retry loops.
+
 ## Shipped in v0.1.3-alpha
 
 The [v0.1.3-alpha](https://github.com/CrashxZ/pve-pocket/releases/tag/v0.1.3-alpha) release consolidates the v0.1.2 UI enhancements and introduces PDM guest power management:

@@ -18,7 +18,11 @@ import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Proxmox Datacenter Manager (PDM) API Driver.
@@ -168,36 +172,218 @@ public class PdmApiDriver {
      * Queries canonical GET /api2/json/resources/list returning Vec<RemoteResources>.
      * Preserves remote cluster identity: node name is formatted as "{remote}/{node}".
      *
-     * Fails closed on API or network errors, or when a remote reports an error.
+     * In a partial fleet scenario where some remotes fail and others succeed,
+     * returns live resources from healthy remotes and cold-start placeholders for failed remotes.
+     * Fails closed if all remotes reported errors or if whole-PDM HTTP call failed.
      */
     public List<NodeStatus> fetchAllNodes(AuthCredentials auth)
             throws ApiException, GeneralSecurityException, IOException {
-        JSONArray groups = fetchResourcesGroups(auth);
-        List<NodeStatus> nodes = new ArrayList<>();
+        PdmFleetResult res = fetchFleetResources(auth);
+        if (res.isAllFailed) {
+            throw new ApiException(0, res.firstError != null ? res.firstError : "All PDM remotes reported errors");
+        }
+        List<NodeStatus> all = new ArrayList<>(res.nodes);
+        all.addAll(res.placeholderNodes);
+        return all;
+    }
+
+    /**
+     * Typed representation of an individual PDM remote group within Vec<RemoteResources>.
+     */
+    public static final class PdmRemoteGroupResult {
+        public final String remote;
+        public final boolean isSuccess;
+        public final String error;
+        public final List<NodeStatus> nodes;
+        public final List<GuestInfo> guests;
+        public final List<StoragePool> storagePools;
+
+        public PdmRemoteGroupResult(String remote, boolean isSuccess, String error,
+                                    List<NodeStatus> nodes, List<GuestInfo> guests,
+                                    List<StoragePool> storagePools) {
+            this.remote = remote != null ? remote : "";
+            this.isSuccess = isSuccess;
+            this.error = error != null ? error : "";
+            this.nodes = nodes != null ? Collections.unmodifiableList(nodes) : Collections.emptyList();
+            this.guests = guests != null ? Collections.unmodifiableList(guests) : Collections.emptyList();
+            this.storagePools = storagePools != null ? Collections.unmodifiableList(storagePools) : Collections.emptyList();
+        }
+    }
+
+    /**
+     * Explicit typed partial-fleet result scoping remote status, errors, and successful resources.
+     */
+    public static final class PdmFleetResult {
+        public final List<PdmRemoteGroupResult> remoteGroups;
+        public final List<NodeStatus> nodes;
+        public final List<NodeStatus> placeholderNodes;
+        public final List<GuestInfo> guests;
+        public final List<StoragePool> storagePools;
+        public final Set<String> successfulRemotes;
+        public final Set<String> failedRemotes;
+        public final Map<String, String> remoteErrors;
+        public final boolean isAllFailed;
+        public final boolean isPartialFailure;
+        public final String firstError;
+
+        public PdmFleetResult(
+                List<PdmRemoteGroupResult> remoteGroups,
+                List<NodeStatus> nodes,
+                List<NodeStatus> placeholderNodes,
+                List<GuestInfo> guests,
+                List<StoragePool> storagePools,
+                Set<String> successfulRemotes,
+                Set<String> failedRemotes,
+                Map<String, String> remoteErrors,
+                boolean isAllFailed,
+                boolean isPartialFailure,
+                String firstError) {
+            this.remoteGroups = remoteGroups != null ? Collections.unmodifiableList(remoteGroups) : Collections.emptyList();
+            this.nodes = nodes != null ? Collections.unmodifiableList(nodes) : Collections.emptyList();
+            this.placeholderNodes = placeholderNodes != null ? Collections.unmodifiableList(placeholderNodes) : Collections.emptyList();
+            this.guests = guests != null ? Collections.unmodifiableList(guests) : Collections.emptyList();
+            this.storagePools = storagePools != null ? Collections.unmodifiableList(storagePools) : Collections.emptyList();
+            this.successfulRemotes = successfulRemotes != null ? Collections.unmodifiableSet(successfulRemotes) : Collections.emptySet();
+            this.failedRemotes = failedRemotes != null ? Collections.unmodifiableSet(failedRemotes) : Collections.emptySet();
+            this.remoteErrors = remoteErrors != null ? Collections.unmodifiableMap(remoteErrors) : Collections.emptyMap();
+            this.isAllFailed = isAllFailed;
+            this.isPartialFailure = isPartialFailure;
+            this.firstError = firstError;
+        }
+    }
+
+    /**
+     * Fetches typed partial-fleet telemetry across all managed remotes.
+     * Retains live resources from healthy remotes and captures remote-scoped errors without
+     * discarding healthy sibling resources.
+     */
+    public PdmFleetResult fetchFleetResources(AuthCredentials auth)
+            throws ApiException, GeneralSecurityException, IOException {
+        return fetchFleetResources(auth, 15_000L);
+    }
+
+    public PdmFleetResult fetchFleetResources(AuthCredentials auth, long remainingBudgetMs)
+            throws ApiException, GeneralSecurityException, IOException {
+        if (remainingBudgetMs <= 0) {
+            throw new ApiException(0, "Request deadline already expired before fetching PDM fleet resources (" + remainingBudgetMs + "ms remaining)");
+        }
+        long deadlineNanos = System.nanoTime() + remainingBudgetMs * 1_000_000L;
+        return fetchFleetResourcesWithDeadline(auth, deadlineNanos);
+    }
+
+    public PdmFleetResult fetchFleetResourcesWithDeadline(AuthCredentials auth, long deadlineNanos)
+            throws ApiException, GeneralSecurityException, IOException {
+        if (deadlineNanos > 0 && System.nanoTime() >= deadlineNanos) {
+            throw new ApiException(0, "Request deadline expired before fetching PDM fleet resources");
+        }
+        JSONArray groups = fetchResourcesGroupsWithDeadline(auth, deadlineNanos);
+
+        List<PdmRemoteGroupResult> remoteGroups = new ArrayList<>();
+        List<NodeStatus> successfulNodes = new ArrayList<>();
+        List<NodeStatus> placeholderNodes = new ArrayList<>();
+        List<GuestInfo> successfulGuests = new ArrayList<>();
+        List<StoragePool> successfulStorage = new ArrayList<>();
+        Set<String> successfulRemotes = new LinkedHashSet<>();
+        Set<String> failedRemotes = new LinkedHashSet<>();
+        Map<String, String> remoteErrors = new LinkedHashMap<>();
+        String firstError = null;
 
         for (int i = 0; i < groups.length(); i++) {
             JSONObject group = groups.optJSONObject(i);
             if (group == null) continue;
             String remote = JsonUtil.optString(group, "remote", "");
             String error = JsonUtil.optString(group, "error", "");
-            if (!error.isEmpty()) {
-                throw new ApiException(0, "Remote '" + remote + "' reported error: " + error);
-            }
-            JSONArray resources = group.optJSONArray("resources");
-            if (resources == null) continue;
 
-            for (int j = 0; j < resources.length(); j++) {
-                JSONObject item = resources.optJSONObject(j);
-                if (item == null) continue;
-                String type = JsonUtil.optString(item, "type", "");
-                if ("pve-node".equalsIgnoreCase(type) || "node".equalsIgnoreCase(type)) {
-                    nodes.add(parsePdmNode(item, remote, config));
+            if (!error.isEmpty()) {
+                failedRemotes.add(remote);
+                remoteErrors.put(remote, error);
+                if (firstError == null) {
+                    firstError = "Remote '" + remote + "' reported error: " + error;
                 }
-                // Honestly ignore pbs-* variants
+                String serverId = config != null ? config.id : "pdm";
+                NodeStatus placeholder = new NodeStatus(
+                        remote, serverId, NodeStatus.Status.UNKNOWN,
+                        Double.NaN, 0, -1L, -1L, -1L, -1L, -1L, -1L,
+                        null, -1L, System.currentTimeMillis());
+                placeholderNodes.add(placeholder);
+
+                // Embedded resources under a failed remote group are strictly NOT treated as fresh
+                remoteGroups.add(new PdmRemoteGroupResult(remote, false, error,
+                        Collections.emptyList(), Collections.emptyList(), Collections.emptyList()));
+            } else {
+                successfulRemotes.add(remote);
+                List<NodeStatus> groupNodes = new ArrayList<>();
+                List<GuestInfo> groupGuests = new ArrayList<>();
+                List<StoragePool> groupStorage = new ArrayList<>();
+
+                JSONArray resources = group.optJSONArray("resources");
+                if (resources != null) {
+                    for (int j = 0; j < resources.length(); j++) {
+                        JSONObject item = resources.optJSONObject(j);
+                        if (item == null) continue;
+                        String type = JsonUtil.optString(item, "type", "");
+                        if ("pve-node".equalsIgnoreCase(type) || "node".equalsIgnoreCase(type)) {
+                            NodeStatus n = parsePdmNode(item, remote, config);
+                            groupNodes.add(n);
+                            successfulNodes.add(n);
+                        } else if ("pve-qemu".equalsIgnoreCase(type) || "qemu".equalsIgnoreCase(type)
+                                || "pve-lxc".equalsIgnoreCase(type) || "lxc".equalsIgnoreCase(type)) {
+                            GuestInfo g = parsePdmGuest(item, remote, config);
+                            groupGuests.add(g);
+                            successfulGuests.add(g);
+                        } else if ("pve-storage".equalsIgnoreCase(type) || "storage".equalsIgnoreCase(type)) {
+                            String itemNode = JsonUtil.optString(item, "node", "");
+                            StoragePool pool = parsePdmStorageItem(item, remote, itemNode);
+                            groupStorage.add(pool);
+                            successfulStorage.add(pool);
+                        }
+                    }
+                }
+                remoteGroups.add(new PdmRemoteGroupResult(remote, true, null,
+                        groupNodes, groupGuests, groupStorage));
             }
         }
 
-        return nodes;
+        boolean isAllFailed = !failedRemotes.isEmpty() && successfulRemotes.isEmpty();
+        boolean isPartialFailure = !failedRemotes.isEmpty() && !successfulRemotes.isEmpty();
+
+        return new PdmFleetResult(
+                remoteGroups, successfulNodes, placeholderNodes,
+                successfulGuests, successfulStorage,
+                successfulRemotes, failedRemotes, remoteErrors,
+                isAllFailed, isPartialFailure, firstError);
+    }
+
+    /**
+     * Helper to parse a single storage pool JSON item with positive type caching.
+     */
+    public StoragePool parsePdmStorageItem(JSONObject item, String remote, String itemNode) {
+        String name = JsonUtil.optString(item, "storage", "unknown");
+        String cacheKey = buildStorageCacheKey(remote, itemNode, name);
+        StorageCacheEntry cachedEntry = GLOBAL_STORAGE_TYPE_CACHE.get(cacheKey);
+        String storageType = (cachedEntry != null && !cachedEntry.isExpired(getMonotonicTimeMs()))
+                ? cachedEntry.type : null;
+        if (storageType == null) {
+            storageType = JsonUtil.optString(item, "plugintype", "unknown");
+        }
+        long disk = JsonUtil.optLong(item, "disk", -1);
+        long maxdisk = JsonUtil.optLong(item, "maxdisk", -1);
+        long avail = (maxdisk > 0 && disk >= 0) ? Math.max(0, maxdisk - disk) : -1;
+        String status = JsonUtil.optString(item, "status", "available");
+        boolean active = "available".equalsIgnoreCase(status) || "online".equalsIgnoreCase(status);
+
+        boolean shared = false;
+        Object sharedObj = item.opt("shared");
+        if (sharedObj instanceof Boolean) {
+            shared = (Boolean) sharedObj;
+        } else if (sharedObj instanceof Number) {
+            shared = ((Number) sharedObj).intValue() == 1;
+        } else if (sharedObj instanceof String) {
+            shared = "true".equalsIgnoreCase((String) sharedObj) || "1".equals(sharedObj);
+        }
+
+        String nodeIdentity = (itemNode == null || itemNode.isEmpty()) ? "" : (remote == null || remote.isEmpty() ? itemNode : remote + "/" + itemNode);
+        return new StoragePool(name, storageType, maxdisk, disk, avail, active, true, shared, "", nodeIdentity);
     }
 
     /**
@@ -221,50 +407,52 @@ public class PdmApiDriver {
 
     public List<GuestInfo> fetchAllGuestsWithDeadline(AuthCredentials auth, long deadlineNanos)
             throws ApiException, GeneralSecurityException, IOException {
-        if (deadlineNanos > 0 && System.nanoTime() >= deadlineNanos) {
-            throw new ApiException(0, "Request deadline expired before fetching guests");
+        PdmFleetResult res = fetchFleetResourcesWithDeadline(auth, deadlineNanos);
+        if (res.isAllFailed) {
+            throw new ApiException(0, res.firstError != null ? res.firstError : "All PDM remotes reported errors");
         }
-        JSONArray groups = fetchResourcesGroupsWithDeadline(auth, deadlineNanos);
-        List<GuestInfo> guests = new ArrayList<>();
+        return res.guests;
+    }
+
+    /**
+     * Fetches hosted guests on a specific node preserving exact remote/node identity.
+     * Scoped to the target remote: unrelated sibling remote failures do NOT poison healthy queries.
+     * If the selected target remote failed, fails closed with an ApiException.
+     */
+    public List<GuestInfo> fetchNodeGuests(String nodeName, AuthCredentials auth)
+            throws ApiException, GeneralSecurityException, IOException {
+        if (nodeName == null || nodeName.trim().isEmpty()) return Collections.emptyList();
+        String targetRemote = extractRemote(nodeName);
+
+        JSONArray groups = fetchResourcesGroups(auth);
+        List<GuestInfo> matched = new ArrayList<>();
 
         for (int i = 0; i < groups.length(); i++) {
             JSONObject group = groups.optJSONObject(i);
             if (group == null) continue;
             String remote = JsonUtil.optString(group, "remote", "");
-            String error = JsonUtil.optString(group, "error", "");
-            if (!error.isEmpty()) {
-                throw new ApiException(0, "Remote '" + remote + "' reported error: " + error);
-            }
-            JSONArray resources = group.optJSONArray("resources");
-            if (resources == null) continue;
 
-            for (int j = 0; j < resources.length(); j++) {
-                JSONObject item = resources.optJSONObject(j);
-                if (item == null) continue;
-                String type = JsonUtil.optString(item, "type", "");
-                if ("pve-qemu".equalsIgnoreCase(type) || "qemu".equalsIgnoreCase(type)
-                        || "pve-lxc".equalsIgnoreCase(type) || "lxc".equalsIgnoreCase(type)) {
-                    guests.add(parsePdmGuest(item, remote, config));
+            boolean matches = targetRemote.isEmpty() || targetRemote.equals(remote);
+            if (matches) {
+                String error = JsonUtil.optString(group, "error", "");
+                if (!error.isEmpty()) {
+                    throw new ApiException(0, "Remote '" + remote + "' reported error: " + error);
                 }
-                // Honestly ignore pbs-* variants
-            }
-        }
+                JSONArray resources = group.optJSONArray("resources");
+                if (resources == null) continue;
 
-        return guests;
-    }
-
-    /**
-     * Fetches hosted guests on a specific node preserving exact remote/node identity.
-     * Does NOT use suffix matching to avoid mixing nodes across different remotes.
-     */
-    public List<GuestInfo> fetchNodeGuests(String nodeName, AuthCredentials auth)
-            throws ApiException, GeneralSecurityException, IOException {
-        List<GuestInfo> all = fetchAllGuests(auth);
-        List<GuestInfo> matched = new ArrayList<>();
-        if (nodeName == null || nodeName.trim().isEmpty()) return matched;
-        for (GuestInfo g : all) {
-            if (nodeName.equals(g.node)) {
-                matched.add(g);
+                for (int j = 0; j < resources.length(); j++) {
+                    JSONObject item = resources.optJSONObject(j);
+                    if (item == null) continue;
+                    String type = JsonUtil.optString(item, "type", "");
+                    if ("pve-qemu".equalsIgnoreCase(type) || "qemu".equalsIgnoreCase(type)
+                            || "pve-lxc".equalsIgnoreCase(type) || "lxc".equalsIgnoreCase(type)) {
+                        GuestInfo g = parsePdmGuest(item, remote, config);
+                        if (nodeName.equals(g.node)) {
+                            matched.add(g);
+                        }
+                    }
+                }
             }
         }
         return matched;
@@ -273,59 +461,42 @@ public class PdmApiDriver {
     /**
      * Fetches configured storage pools for a specific node from PDM resource inventory.
      * Preserves exact remote/node identity ({remote}/{node}) to avoid mixing storage pools.
-     * Shared is parsed as boolean; plugintype defaults to 'unknown' in upstream PDM schema.
+     * Scoped to target remote: unrelated sibling remote errors do NOT throw.
+     * Selected remote failure fails closed with ApiException.
      */
     public List<StoragePool> fetchNodeStorage(String nodeName, AuthCredentials auth)
             throws ApiException, GeneralSecurityException, IOException {
+        if (nodeName == null || nodeName.trim().isEmpty()) return Collections.emptyList();
+        String targetRemote = extractRemote(nodeName);
+
         JSONArray groups = fetchResourcesGroups(auth);
         List<StoragePool> pools = new ArrayList<>();
-        if (nodeName == null || nodeName.trim().isEmpty()) return pools;
 
         for (int i = 0; i < groups.length(); i++) {
             JSONObject group = groups.optJSONObject(i);
             if (group == null) continue;
             String remote = JsonUtil.optString(group, "remote", "");
-            String error = JsonUtil.optString(group, "error", "");
-            if (!error.isEmpty()) {
-                throw new ApiException(0, "Remote '" + remote + "' reported error: " + error);
-            }
-            JSONArray resources = group.optJSONArray("resources");
-            if (resources == null) continue;
 
-            for (int j = 0; j < resources.length(); j++) {
-                JSONObject item = resources.optJSONObject(j);
-                if (item == null) continue;
-                String type = JsonUtil.optString(item, "type", "");
-                if ("pve-storage".equalsIgnoreCase(type) || "storage".equalsIgnoreCase(type)) {
-                    String itemNode = JsonUtil.optString(item, "node", "");
-                    String itemFullNode = remote.isEmpty() ? itemNode : remote + "/" + itemNode;
+            boolean matches = targetRemote.isEmpty() || targetRemote.equals(remote);
+            if (matches) {
+                String error = JsonUtil.optString(group, "error", "");
+                if (!error.isEmpty()) {
+                    throw new ApiException(0, "Remote '" + remote + "' reported error: " + error);
+                }
+                JSONArray resources = group.optJSONArray("resources");
+                if (resources == null) continue;
 
-                    if (nodeName.equals(itemFullNode)) {
-                        String name = JsonUtil.optString(item, "storage", "unknown");
-                        String cacheKey = buildStorageCacheKey(remote, itemNode, name);
-                        StorageCacheEntry cachedEntry = GLOBAL_STORAGE_TYPE_CACHE.get(cacheKey);
-                        String storageType = (cachedEntry != null && !cachedEntry.isExpired(getMonotonicTimeMs()))
-                                ? cachedEntry.type : null;
-                        if (storageType == null) {
-                            storageType = JsonUtil.optString(item, "plugintype", "unknown");
+                for (int j = 0; j < resources.length(); j++) {
+                    JSONObject item = resources.optJSONObject(j);
+                    if (item == null) continue;
+                    String type = JsonUtil.optString(item, "type", "");
+                    if ("pve-storage".equalsIgnoreCase(type) || "storage".equalsIgnoreCase(type)) {
+                        String itemNode = JsonUtil.optString(item, "node", "");
+                        String itemFullNode = remote.isEmpty() ? itemNode : remote + "/" + itemNode;
+
+                        if (nodeName.equals(itemFullNode)) {
+                            pools.add(parsePdmStorageItem(item, remote, itemNode));
                         }
-                        long disk = JsonUtil.optLong(item, "disk", -1);
-                        long maxdisk = JsonUtil.optLong(item, "maxdisk", -1);
-                        long avail = (maxdisk > 0 && disk >= 0) ? Math.max(0, maxdisk - disk) : -1;
-                        String status = JsonUtil.optString(item, "status", "available");
-                        boolean active = "available".equalsIgnoreCase(status) || "online".equalsIgnoreCase(status);
-
-                        boolean shared = false;
-                        Object sharedObj = item.opt("shared");
-                        if (sharedObj instanceof Boolean) {
-                            shared = (Boolean) sharedObj;
-                        } else if (sharedObj instanceof Number) {
-                            shared = ((Number) sharedObj).intValue() == 1;
-                        } else if (sharedObj instanceof String) {
-                            shared = "true".equalsIgnoreCase((String) sharedObj) || "1".equals(sharedObj);
-                        }
-
-                        pools.add(new StoragePool(name, storageType, maxdisk, disk, avail, active, true, shared, ""));
                     }
                 }
             }
@@ -336,6 +507,8 @@ public class PdmApiDriver {
     /**
      * Fetches detailed guest status for a specific VMID, node, and guest type across the PDM resource tree.
      * Preserves exact identity: matches vmid, guestType (QEMU vs LXC), and exact node identity ({remote}/{node}).
+     * Scoped to the target remote: unrelated sibling failures do NOT poison healthy queries.
+     * Selected target remote failure fails closed by throwing ApiException.
      */
     public GuestInfo fetchGuestDetail(String nodeName, int vmid, GuestInfo.GuestType guestType, AuthCredentials auth)
             throws ApiException, GeneralSecurityException, IOException {
@@ -359,13 +532,38 @@ public class PdmApiDriver {
         if (deadlineNanos > 0 && System.nanoTime() >= deadlineNanos) {
             throw new ApiException(0, "Request deadline expired before fetching guest detail");
         }
-        List<GuestInfo> guests = fetchAllGuestsWithDeadline(auth, deadlineNanos);
-        for (GuestInfo g : guests) {
-            if (g.vmid == vmid && g.type == guestType) {
-                if (nodeName != null && !nodeName.isEmpty() && !nodeName.equals(g.node)) {
-                    continue;
+        if (nodeName == null || nodeName.trim().isEmpty()) {
+            return null;
+        }
+        String targetRemote = extractRemote(nodeName);
+
+        JSONArray groups = fetchResourcesGroupsWithDeadline(auth, deadlineNanos);
+        for (int i = 0; i < groups.length(); i++) {
+            JSONObject group = groups.optJSONObject(i);
+            if (group == null) continue;
+            String remote = JsonUtil.optString(group, "remote", "");
+
+            boolean matches = targetRemote.isEmpty() || targetRemote.equals(remote);
+            if (matches) {
+                String error = JsonUtil.optString(group, "error", "");
+                if (!error.isEmpty()) {
+                    throw new ApiException(0, "Remote '" + remote + "' reported error: " + error);
                 }
-                return g;
+                JSONArray resources = group.optJSONArray("resources");
+                if (resources == null) continue;
+
+                for (int j = 0; j < resources.length(); j++) {
+                    JSONObject item = resources.optJSONObject(j);
+                    if (item == null) continue;
+                    String type = JsonUtil.optString(item, "type", "");
+                    if ("pve-qemu".equalsIgnoreCase(type) || "qemu".equalsIgnoreCase(type)
+                            || "pve-lxc".equalsIgnoreCase(type) || "lxc".equalsIgnoreCase(type)) {
+                        GuestInfo g = parsePdmGuest(item, remote, config);
+                        if (g.vmid == vmid && g.type == guestType && nodeName.equals(g.node)) {
+                            return g;
+                        }
+                    }
+                }
             }
         }
         return null;
@@ -730,7 +928,17 @@ public class PdmApiDriver {
         if ("running".equalsIgnoreCase(status)) {
             state = TaskResult.TaskState.RUNNING;
         } else if ("stopped".equalsIgnoreCase(status)) {
-            state = "OK".equalsIgnoreCase(exitStatus) ? TaskResult.TaskState.OK : TaskResult.TaskState.ERROR;
+            if (exitStatus == null || exitStatus.trim().isEmpty()) {
+                state = TaskResult.TaskState.UNKNOWN;
+            } else if ("OK".equalsIgnoreCase(exitStatus.trim())) {
+                state = TaskResult.TaskState.OK;
+            } else if (exitStatus.trim().matches("^WARNINGS:\\s*\\d+$")) {
+                state = TaskResult.TaskState.WARNINGS;
+            } else if (exitStatus.trim().startsWith("WARNINGS:")) {
+                state = TaskResult.TaskState.UNKNOWN;
+            } else {
+                state = TaskResult.TaskState.ERROR;
+            }
         } else {
             state = TaskResult.TaskState.UNKNOWN;
         }
@@ -836,7 +1044,7 @@ public class PdmApiDriver {
         if (aggregateBudgetMs <= 0) {
             for (StoragePool p : pools) {
                 String backendType = fetchStorageType(remote, node, p.name, auth, 0L);
-                enriched.add(new StoragePool(p.name, backendType, p.total, p.used, p.avail, p.active, p.enabled, p.shared, p.content));
+                enriched.add(new StoragePool(p.name, backendType, p.total, p.used, p.avail, p.active, p.enabled, p.shared, p.content, p.node));
             }
             return enriched;
         }
@@ -846,7 +1054,7 @@ public class PdmApiDriver {
             long remaining = deadlineMs - getMonotonicTimeMs();
             long poolBudget = remaining > 0 ? Math.min(remaining, 5_000L) : 0L;
             String backendType = fetchStorageType(remote, node, p.name, auth, poolBudget);
-            enriched.add(new StoragePool(p.name, backendType, p.total, p.used, p.avail, p.active, p.enabled, p.shared, p.content));
+            enriched.add(new StoragePool(p.name, backendType, p.total, p.used, p.avail, p.active, p.enabled, p.shared, p.content, p.node));
         }
         return enriched;
     }

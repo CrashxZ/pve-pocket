@@ -330,7 +330,7 @@ public class PveApiDriver {
             JSONArray array = JsonUtil.getDataArray(response);
             for (int i = 0; i < array.length(); i++) {
                 JSONObject obj = array.getJSONObject(i);
-                pools.add(parseStoragePool(obj));
+                pools.add(parseStoragePool(obj, nodeName));
             }
         } catch (JSONException e) {
             throw new ApiException(0, "Failed to parse storage response: " + e.getMessage());
@@ -339,6 +339,10 @@ public class PveApiDriver {
     }
 
     public static StoragePool parseStoragePool(JSONObject obj) {
+        return parseStoragePool(obj, null);
+    }
+
+    public static StoragePool parseStoragePool(JSONObject obj, String node) {
         String name = obj.optString("storage", "unknown");
         String type = obj.optString("type", "");
         long total = JsonUtil.optLong(obj, "total", -1);
@@ -348,7 +352,7 @@ public class PveApiDriver {
         boolean enabled = obj.optInt("enabled", 1) == 1;
         boolean shared = obj.optInt("shared", 0) == 1;
         String content = obj.optString("content", "");
-        return new StoragePool(name, type, total, used, avail, active, enabled, shared, content);
+        return new StoragePool(name, type, total, used, avail, active, enabled, shared, content, node);
     }
 
     private List<GuestInfo> parseGuestList(String response, String nodeName,
@@ -533,6 +537,32 @@ public class PveApiDriver {
         return forceStopGuestWithDeadline(nodeName, vmid, type, auth, deadlineNanos);
     }
 
+    public String executeGuestPowerActionWithDeadline(String nodeName, int vmid, GuestInfo.GuestType type,
+                                                      String action, AuthCredentials auth, long deadlineNanos)
+            throws ApiException, IOException {
+        if ("start".equals(action)) {
+            return startGuestWithDeadline(nodeName, vmid, type, auth, deadlineNanos);
+        } else if ("shutdown".equals(action)) {
+            return shutdownGuestWithDeadline(nodeName, vmid, type, auth, deadlineNanos);
+        } else if ("reboot".equals(action)) {
+            return rebootGuestWithDeadline(nodeName, vmid, type, auth, deadlineNanos);
+        } else if ("stop".equals(action)) {
+            return forceStopGuestWithDeadline(nodeName, vmid, type, auth, deadlineNanos);
+        } else {
+            throw new ApiException(0, "Unsupported power action: " + action);
+        }
+    }
+
+    public String executeGuestPowerAction(String nodeName, int vmid, GuestInfo.GuestType type,
+                                          String action, AuthCredentials auth, long budgetMs)
+            throws ApiException, IOException {
+        if (budgetMs <= 0) {
+            throw new ApiException(0, "Request deadline already expired before dispatch (" + budgetMs + "ms remaining)");
+        }
+        long deadlineNano = System.nanoTime() + budgetMs * 1_000_000L;
+        return executeGuestPowerActionWithDeadline(nodeName, vmid, type, action, auth, deadlineNano);
+    }
+
     // ---- Task polling ----
 
     /**
@@ -580,15 +610,25 @@ public class PveApiDriver {
     private TaskResult parseTaskStatus(String upid, JSONObject data, String nodeName)
             throws JSONException {
         String status = data.optString("status", "unknown");
-        String exitStatus = data.optString("exitstatus", null);
+        String exitStatus = data.has("exitstatus") && !data.isNull("exitstatus") ? data.optString("exitstatus") : null;
         long startTime = JsonUtil.optLong(data, "starttime", 0);
         long endTime = JsonUtil.optLong(data, "endtime", 0);
 
         TaskResult.TaskState state;
-        if ("running".equals(status)) {
+        if ("running".equalsIgnoreCase(status)) {
             state = TaskResult.TaskState.RUNNING;
-        } else if ("stopped".equals(status)) {
-            state = "OK".equals(exitStatus) ? TaskResult.TaskState.OK : TaskResult.TaskState.ERROR;
+        } else if ("stopped".equalsIgnoreCase(status)) {
+            if (exitStatus == null || exitStatus.trim().isEmpty()) {
+                state = TaskResult.TaskState.UNKNOWN;
+            } else if ("OK".equalsIgnoreCase(exitStatus.trim())) {
+                state = TaskResult.TaskState.OK;
+            } else if (exitStatus.trim().matches("^WARNINGS:\\s*\\d+$")) {
+                state = TaskResult.TaskState.WARNINGS;
+            } else if (exitStatus.trim().startsWith("WARNINGS:")) {
+                state = TaskResult.TaskState.UNKNOWN;
+            } else {
+                state = TaskResult.TaskState.ERROR;
+            }
         } else {
             state = TaskResult.TaskState.UNKNOWN;
         }

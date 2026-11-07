@@ -16,6 +16,7 @@ import com.homelabpocket.R;
 import com.homelabpocket.model.NodeStatus;
 import com.homelabpocket.model.ServerConfig;
 import com.homelabpocket.ui.MainActivity;
+import com.homelabpocket.ui.UiPresentationPolicy;
 import com.homelabpocket.ui.terminal.TerminalActivity;
 import com.homelabpocket.util.JsonUtil;
 
@@ -31,6 +32,8 @@ public class NodesView {
     private final LinearLayout layoutNodes;
     private final TextView tvOfflineHeader;
     private final LinearLayout layoutOfflineNodes;
+
+    private long lastSuccessfulUpdate = 0;
 
     public NodesView(MainActivity activity) {
         this.activity = activity;
@@ -124,10 +127,32 @@ public class NodesView {
         return root;
     }
 
+    public long getLastSuccessfulUpdate() {
+        return lastSuccessfulUpdate;
+    }
+
     public void render(List<NodeStatus> nodes, boolean isLoading, String error) {
-        if (error != null && !error.isEmpty()) {
+        render(nodes, isLoading, error, this.lastSuccessfulUpdate);
+    }
+
+    public void render(List<NodeStatus> nodes, boolean isLoading, String error, long lastSuccessfulUpdate) {
+        this.lastSuccessfulUpdate = lastSuccessfulUpdate;
+        boolean hasLive = false;
+        if (nodes != null) {
+            for (NodeStatus n : nodes) {
+                if (n.isOnline()) {
+                    hasLive = true;
+                    break;
+                }
+            }
+        }
+        boolean hasRetainedNodes = nodes != null && !nodes.isEmpty();
+        UiPresentationPolicy.ErrorBannerState bannerState =
+                UiPresentationPolicy.evaluateErrorBanner(error, hasRetainedNodes, lastSuccessfulUpdate, hasLive);
+
+        if (bannerState.isVisible) {
             tvError.setVisibility(View.VISIBLE);
-            tvError.setText(error);
+            tvError.setText(bannerState.bannerText);
         } else {
             tvError.setVisibility(View.GONE);
         }
@@ -136,6 +161,7 @@ public class NodesView {
         layoutOfflineNodes.removeAllViews();
 
         int offlineCount = 0;
+        int unknownCount = 0;
         if (nodes != null) {
             for (NodeStatus n : nodes) {
                 View card = LayoutInflater.from(activity).inflate(R.layout.item_node, null);
@@ -144,13 +170,24 @@ public class NodesView {
                 if (n.isOnline()) {
                     layoutNodes.addView(card);
                 } else {
-                    offlineCount++;
+                    if (n.status == NodeStatus.Status.UNKNOWN) {
+                        unknownCount++;
+                    } else {
+                        offlineCount++;
+                    }
                     layoutOfflineNodes.addView(card);
                 }
             }
         }
 
-        if (offlineCount > 0) {
+        if (offlineCount > 0 || unknownCount > 0) {
+            if (unknownCount > 0 && offlineCount == 0) {
+                tvOfflineHeader.setText("UNREACHABLE / UNKNOWN HOSTS");
+            } else if (unknownCount > 0) {
+                tvOfflineHeader.setText("OFFLINE / UNREACHABLE HOSTS (" + (offlineCount + unknownCount) + ")");
+            } else {
+                tvOfflineHeader.setText("OFFLINE HOSTS (STANDBY)");
+            }
             tvOfflineHeader.setVisibility(View.VISIBLE);
             layoutOfflineNodes.setVisibility(View.VISIBLE);
         } else {
@@ -179,7 +216,20 @@ public class NodesView {
         Button btnShell = card.findViewById(R.id.btn_node_shell);
 
         tvName.setText(n.getDisplayName());
-        tvMeta.setText(com.homelabpocket.ui.UiPresentationPolicy.formatNodeMeta(n));
+        String metaText = com.homelabpocket.ui.UiPresentationPolicy.formatNodeMeta(n);
+        if (n.fetchedAt > 0) {
+            java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault());
+            String timeStr = sdf.format(new java.util.Date(n.fetchedAt));
+            if (n.isOnline()) {
+                tvMeta.setText(metaText + " \u2022 " + timeStr);
+            } else if (n.status == NodeStatus.Status.UNKNOWN) {
+                tvMeta.setText(metaText + " \u2022 stale as of " + timeStr);
+            } else {
+                tvMeta.setText(metaText);
+            }
+        } else {
+            tvMeta.setText(metaText);
+        }
 
         ServerConfig nodeServer = null;
         try {
@@ -256,10 +306,24 @@ public class NodesView {
                 tvNet.setText(com.homelabpocket.ui.UiPresentationPolicy.formatHostNet(n, isPdm));
             }
         } else {
-            tvStatus.setText("OFFLINE");
+            if (n.status == NodeStatus.Status.UNKNOWN) {
+                tvStatus.setText("UNKNOWN");
+            } else {
+                tvStatus.setText("OFFLINE");
+            }
             tvStatus.setBackgroundResource(R.drawable.bg_chip_stopped);
             tvStatus.setTextColor(activity.getResources().getColor(R.color.matrix_amber));
             if (tvOfflineMsg != null) {
+                if (n.status == NodeStatus.Status.UNKNOWN) {
+                    if (n.fetchedAt > 0) {
+                        java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault());
+                        tvOfflineMsg.setText("Host unreachable (stale as of " + sdf.format(new java.util.Date(n.fetchedAt)) + ")");
+                    } else {
+                        tvOfflineMsg.setText("Host is unreachable or remote reported error");
+                    }
+                } else {
+                    tvOfflineMsg.setText(R.string.node_offline_msg);
+                }
                 tvOfflineMsg.setVisibility(View.VISIBLE);
             }
             if (layoutMetrics != null) {

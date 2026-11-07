@@ -11,6 +11,7 @@ public class TaskResult {
     public enum TaskState {
         RUNNING,    // Task is still executing
         OK,         // Task completed successfully
+        WARNINGS,   // Task completed with warnings
         ERROR,      // Task failed with error
         TIMEOUT,    // Polling timed out without completion
         UNKNOWN     // State indeterminate
@@ -54,7 +55,7 @@ public class TaskResult {
     }
 
     public boolean isSuccess() {
-        return state == TaskState.OK;
+        return state == TaskState.OK || state == TaskState.WARNINGS;
     }
 
     /** Human-readable summary */
@@ -62,6 +63,7 @@ public class TaskResult {
         switch (state) {
             case RUNNING: return "Running…" + (progressText != null ? " " + progressText : "");
             case OK: return "Completed successfully";
+            case WARNINGS: return "Completed with warnings: " + (exitStatus != null ? exitStatus : "");
             case ERROR: return "Failed: " + (exitStatus != null ? exitStatus : "unknown error");
             case TIMEOUT: return "Timed out waiting for completion";
             default: return "Unknown state";

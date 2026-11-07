@@ -24,9 +24,15 @@ public class StoragePool {
     public final boolean enabled;
     public final boolean shared;
     public final String content;
+    public final String node;
 
     public StoragePool(String name, String type, long total, long used, long avail,
                        boolean active, boolean enabled, boolean shared, String content) {
+        this(name, type, total, used, avail, active, enabled, shared, content, null);
+    }
+
+    public StoragePool(String name, String type, long total, long used, long avail,
+                       boolean active, boolean enabled, boolean shared, String content, String node) {
         this.name = name != null ? name : "storage";
         this.type = type != null ? type : "unknown";
         this.total = total;
@@ -36,6 +42,7 @@ public class StoragePool {
         this.enabled = enabled;
         this.shared = shared;
         this.content = content != null ? content : "";
+        this.node = node;
     }
 
     public int getUsagePercent() {

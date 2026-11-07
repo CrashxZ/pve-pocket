@@ -86,6 +86,10 @@ public class ServerConfigStore {
         return null;
     }
 
+    public String getConfigFingerprint() {
+        return getPrefs().getString(KEY_SERVERS, "");
+    }
+
     public static String newId() {
         return UUID.randomUUID().toString();
     }
